@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account information and permissions",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["staff", "director", "admin"] },
+        "branch": { "type": "string", "enum": ["본사", "쌍문점", "외대점", "길동점", "시청점", "시청역점", "광화문점", "노원점"] },
+        "isApproved": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "branch", "isApproved"]
+    },
+    "Consultation": {
+      "title": "New Consultation",
+      "description": "New visitor consultation record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "branch": { "type": "string" },
+        "name": { "type": "string" },
+        "contact": { "type": "string" },
+        "phone": { "type": "string" },
+        "gender": { "type": "string", "enum": ["남", "여"] },
+        "visitDate": { "type": "string" },
+        "visitTime": { "type": "string" },
+        "scheduledDate": { "type": "string" },
+        "scheduledTime": { "type": "string" },
+        "category": { "type": "string" },
+        "visitPath": { "type": "string" },
+        "content": { "type": "string" },
+        "consultant": { "type": "string" },
+        "registrationStatus": { "type": "string", "enum": ["등록", "미등록", "등록예정"] },
+        "remind1": { 
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "enum": ["문자", "전화", ""] },
+            "content": { "type": "string" },
+            "completed": { "type": "boolean" }
+          }
+        },
+        "remind2": { 
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "enum": ["문자", "전화", ""] },
+            "content": { "type": "string" },
+            "completed": { "type": "boolean" }
+          }
+        },
+        "remind3": { 
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "enum": ["문자", "전화", ""] },
+            "content": { "type": "string" },
+            "completed": { "type": "boolean" }
+          }
+        },
+        "isCompleted": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "branch", "name", "contact", "isCompleted"]
+    },
+    "RenewalTarget": {
+      "title": "Renewal Target",
+      "description": "Existing member renewal management record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "branch": { "type": "string" },
+        "name": { "type": "string" },
+        "gender": { "type": "string" },
+        "birthDate": { "type": "string" },
+        "age": { "type": "number" },
+        "phone": { "type": "string" },
+        "membershipInfo": { "type": "string" },
+        "locker": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "renewalStatus": { "type": "string" },
+        "renewalTiming": { "type": "string" },
+        "consultation1": { "type": "string" },
+        "consultation2": { "type": "string" },
+        "consultation3": { "type": "string" },
+        "uploadMonth": { "type": "string" },
+        "uploadedBy": { "type": "string" }
+      },
+      "required": ["id", "branch", "name"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/consultations/{id}": {
+      "schema": "Consultation",
+      "description": "Consultation records"
+    },
+    "/renewalTargets/{id}": {
+      "schema": "RenewalTarget",
+      "description": "Renewal management records"
+    }
+  }
+}

@@ -1,0 +1,86 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Fields:
+//   - uid: string (required) - Firebase Auth UID
+//   - email: string (required) - User email
+//   - displayName: string - User display name
+//   - role: string (required, ['staff', 'director', 'admin']) - User role
+//   - branch: string (required) - User's branch
+//   - isApproved: boolean (required) - Admin approval status
+//
+// Collection: consultations
+// Fields:
+//   - id: string (required)
+//   - branch: string (required)
+//   - name: string (required)
+//   - isCompleted: boolean (required)
+//   - createdBy: string (required) - UID of creator
+//
+// Collection: renewalTargets
+// Fields:
+//   - id: string (required)
+//   - branch: string (required)
+//   - name: string (required)
+//   - uploadedBy: string (required) - UID of uploader
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function isApproved() {
+      return isAuthenticated() && getUserData().isApproved == true;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserData().role == 'admin' || 
+        (request.auth.token.email == "kayjeon0715@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+    
+    function isDirector() {
+      return isAuthenticated() && getUserData().role == 'director';
+    }
+
+    function isBranchStaff(branch) {
+      return isApproved() && getUserData().branch == branch;
+    }
+
+    // User Rules
+    match /users/{uid} {
+      allow read: if isAuthenticated() && (request.auth.uid == uid || isAdmin() || isDirector());
+      allow create: if isAuthenticated() && request.auth.uid == uid;
+      allow update: if isAdmin();
+    }
+
+    // Consultation Rules
+    match /consultations/{id} {
+      allow read: if isApproved() && (isAdmin() || isDirector() || getUserData().branch == resource.data.branch);
+      allow create: if isApproved() && (isAdmin() || isDirector() || request.resource.data.branch == getUserData().branch);
+      allow update: if isApproved() && (isAdmin() || isDirector() || getUserData().branch == resource.data.branch);
+      allow delete: if isAdmin();
+    }
+
+    // Renewal Target Rules
+    match /renewalTargets/{id} {
+      allow read: if isApproved() && (isAdmin() || isDirector() || getUserData().branch == resource.data.branch);
+      allow create: if isApproved() && (isAdmin() || isDirector() || request.resource.data.branch == getUserData().branch);
+      allow update: if isApproved() && (isAdmin() || isDirector() || getUserData().branch == resource.data.branch);
+      allow delete: if isAdmin();
+    }
+  }
+}
