@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Users, UserPlus, RefreshCw, Home, Plus, FileUp, Calendar, Phone, 
   CheckCircle2, Clock, ChevronRight, Trash2, X, LogOut, ShieldCheck, 
-  Building2, AlertCircle, UserCheck, Edit2
+  Building2, AlertCircle, UserCheck, Edit2, LayoutGrid, Route, Percent
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -40,6 +40,209 @@ const AI_SCHEDULE_CHOICES: { value: string; label: string }[] = [
   { value: '오늘 상담 일정', label: '오늘 상담' },
   { value: '추후 상담 일정', label: '추후 상담' },
 ];
+
+type CountBarItem = { label: string; count: number };
+
+function buildCategoryCountBars(consultations: NewConsultation[]): CountBarItem[] {
+  const map = new Map<string, number>();
+  for (const c of consultations) {
+    const cat = c.category?.trim() || '미지정';
+    map.set(cat, (map.get(cat) || 0) + 1);
+  }
+  return [...map.entries()].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
+}
+
+function buildVisitPathCountBars(consultations: NewConsultation[]): CountBarItem[] {
+  const map = new Map<string, number>();
+  for (const c of consultations) {
+    const p = c.visitPath?.trim() || '미입력';
+    map.set(p, (map.get(p) || 0) + 1);
+  }
+  return [...map.entries()].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
+}
+
+type RegistrationBreakdown = { label: string; count: number; registered: number; rate: number };
+
+function buildRegistrationBreakdown(consultations: NewConsultation[]): RegistrationBreakdown[] {
+  const map = new Map<string, { count: number; registered: number }>();
+  for (const c of consultations) {
+    const cat = c.category?.trim() || '미지정';
+    const cur = map.get(cat) || { count: 0, registered: 0 };
+    cur.count += 1;
+    if (c.registrationStatus === '등록') cur.registered += 1;
+    map.set(cat, cur);
+  }
+  return [...map.entries()]
+    .map(([label, { count, registered }]) => ({
+      label,
+      count,
+      registered,
+      rate: count > 0 ? Math.round((registered / count) * 100) : 0,
+    }))
+    .sort((a, b) => b.count - a.count);
+}
+
+function ConsultationMetricBar(props: {
+  label: string;
+  value: number;
+  max: number;
+  suffix: string;
+  barClass: string;
+  subLine?: string;
+}) {
+  const { label, value, max, suffix, barClass, subLine } = props;
+  const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="font-semibold text-slate-700 truncate pr-1" title={label}>
+          {label}
+        </span>
+        <span className="shrink-0 tabular-nums font-bold text-slate-800">
+          {value}
+          {suffix}
+        </span>
+      </div>
+      <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden ring-1 ring-slate-200/60">
+        <div className={cn('h-full rounded-full transition-all duration-500 ease-out', barClass)} style={{ width: `${pct}%` }} />
+      </div>
+      {subLine && <p className="text-[10px] text-slate-400 tabular-nums">{subLine}</p>}
+    </div>
+  );
+}
+
+function NewConsultationAnalyticsDashboard({
+  consultations,
+  monthLabel,
+}: {
+  consultations: NewConsultation[];
+  monthLabel: string;
+}) {
+  const categoryBars = useMemo(() => buildCategoryCountBars(consultations), [consultations]);
+  const visitPathBars = useMemo(() => buildVisitPathCountBars(consultations), [consultations]);
+  const registrationRows = useMemo(() => buildRegistrationBreakdown(consultations), [consultations]);
+  const overall = useMemo(() => {
+    const total = consultations.length;
+    const registered = consultations.filter((c) => c.registrationStatus === '등록').length;
+    return { total, registered, rate: total > 0 ? Math.round((registered / total) * 100) : 0 };
+  }, [consultations]);
+
+  const maxCat = categoryBars[0]?.count ?? 1;
+  const maxPath = visitPathBars[0]?.count ?? 1;
+
+  if (consultations.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-10 text-center text-sm text-slate-400">
+        {monthLabel} · 표시할 신규 상담이 없습니다.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs font-semibold text-slate-500 px-0.5">신규 상담 인사이트 · {monthLabel}</p>
+      <div className="grid gap-5 lg:grid-cols-3">
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col min-h-[320px]">
+          <div className="flex items-center gap-2 mb-1">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+              <LayoutGrid size={18} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-800 leading-tight">종목별 상담 인원</h3>
+              <p className="text-[11px] text-slate-500">종목당 상담 건수</p>
+            </div>
+          </div>
+          <div className="mt-4 space-y-3 flex-1 overflow-y-auto max-h-[300px] pr-1">
+            {categoryBars.map((row) => (
+              <div key={row.label}>
+                <ConsultationMetricBar
+                  label={row.label}
+                  value={row.count}
+                  max={maxCat}
+                  suffix="명"
+                  barClass="bg-gradient-to-r from-violet-500 to-fuchsia-500"
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col min-h-[320px]">
+          <div className="flex items-center gap-2 mb-1">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-100 text-sky-700">
+              <Route size={18} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-800 leading-tight">방문 경로별 인원</h3>
+              <p className="text-[11px] text-slate-500">유입 경로당 상담 건수</p>
+            </div>
+          </div>
+          <div className="mt-4 space-y-3 flex-1 overflow-y-auto max-h-[300px] pr-1">
+            {visitPathBars.map((row) => (
+              <div key={row.label}>
+                <ConsultationMetricBar
+                  label={row.label}
+                  value={row.count}
+                  max={maxPath}
+                  suffix="명"
+                  barClass="bg-gradient-to-r from-sky-500 to-cyan-500"
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col min-h-[320px]">
+          <div className="flex items-center gap-2 mb-1">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+              <Percent size={18} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-800 leading-tight">상담 등록율</h3>
+              <p className="text-[11px] text-slate-500">등록 상태 기준 (등록 / 전체)</p>
+            </div>
+          </div>
+          <div className="mt-3 rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-teal-50 p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700/80">전체 등록율</p>
+            <div className="mt-1 flex items-end justify-between gap-2">
+              <span className="text-4xl font-black tabular-nums text-emerald-900">{overall.rate}%</span>
+              <span className="text-xs font-semibold text-emerald-800 tabular-nums pb-1">
+                {overall.registered} / {overall.total}명
+              </span>
+            </div>
+            <div className="mt-3 h-3 rounded-full bg-white/90 overflow-hidden shadow-inner">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500"
+                style={{ width: `${overall.rate}%` }}
+              />
+            </div>
+          </div>
+          <p className="mt-4 text-[10px] font-bold uppercase tracking-wide text-slate-500">종목별 등록율</p>
+          <div className="mt-2 space-y-3 flex-1 overflow-y-auto max-h-[200px] pr-1">
+            {registrationRows.map((row) => (
+              <div key={row.label}>
+                <ConsultationMetricBar
+                  label={row.label}
+                  value={row.rate}
+                  max={100}
+                  suffix="%"
+                  barClass={
+                    row.rate >= 50
+                      ? 'bg-gradient-to-r from-emerald-500 to-green-500'
+                      : row.rate > 0
+                        ? 'bg-gradient-to-r from-amber-400 to-orange-400'
+                        : 'bg-slate-300'
+                  }
+                  subLine={`등록 ${row.registered}명 / 전체 ${row.count}명`}
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
 
 const formatPhoneNumber = (value: string) => {
   const digits = value.replace(/\D/g, '');
@@ -433,6 +636,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
       });
   }, [newConsultations]);
 
+  const boardMonthLabel = `${currentYear}년 ${parseInt(currentMonth, 10)}월`;
+
   const parseMergedContent = (content: string) => {
     const result = { purpose: '', experience: '', injury: '', plan: '', other: '' };
     if (!content) return result;
@@ -806,6 +1011,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                   </button>
                 </div>
 
+                <NewConsultationAnalyticsDashboard consultations={newConsultations} monthLabel={boardMonthLabel} />
+
                 <section className="grid gap-6 md:grid-cols-3">
                   <div onClick={() => { setActiveTab('new'); setIsAddingNew(true); }} className="cursor-pointer transition-transform hover:scale-[1.02] active:scale-[0.98]">
                     <StatCard title="이번 달 신규상담" value={newConsultations.length} icon={<UserPlus className="text-indigo-600" />} color="bg-indigo-50" />
@@ -828,6 +1035,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                               <span className="ml-2 text-slate-400">({visit.branch})</span>
                             </p>
                             <h4 className="text-lg font-bold text-slate-800">{visit.name}</h4>
+                            <p className="text-xs font-semibold text-indigo-600 mt-1">종목: {visit.category || '미지정'}</p>
                             <p className="text-sm text-slate-500 flex items-center gap-1 mt-1"><Phone size={12} /> {visit.contact}</p>
                             <div className="mt-4 flex items-center justify-between border-t pt-3">
                               <span className="text-xs text-slate-400">경로: {visit.visitPath}</span>
@@ -884,6 +1092,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                     </button>
                   )}
                 </div>
+
+                <NewConsultationAnalyticsDashboard consultations={newConsultations} monthLabel={boardMonthLabel} />
 
                 {isAddingNew ? (
                   <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="rounded-3xl border bg-white p-8 shadow-xl">
@@ -1064,10 +1274,11 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                   </motion.div>
                 ) : (
                   <div className="rounded-2xl border bg-white shadow-sm overflow-hidden overflow-x-auto">
-                    <table className="w-full text-left min-w-[1000px]">
+                    <table className="w-full text-left min-w-[1100px]">
                       <thead className="bg-slate-50 border-b">
                         <tr>
                           <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">지점 / 성함</th>
+                          <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap">종목</th>
                           <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">연락처 / 성별</th>
                           <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">방문일 / 예정일</th>
                           <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">등록상태</th>
@@ -1087,6 +1298,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                               </div>
                               <div className="font-bold">{c.name}</div>
                             </td>
+                            <td className="px-6 py-4 text-sm font-semibold text-indigo-700 whitespace-nowrap">{c.category || '미지정'}</td>
                             <td className="px-6 py-4 text-sm">{c.contact}<br/><span className="text-xs text-slate-400">{c.gender}</span></td>
                             <td className="px-6 py-4 text-sm">
                               <div className="text-indigo-600 font-medium">방문: {c.visitDate || '-'} {c.visitTime}</div>
