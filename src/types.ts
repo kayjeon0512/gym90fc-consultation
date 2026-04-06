@@ -45,6 +45,8 @@ export interface NewConsultation {
   createdBy: string;
 }
 
+export type RenewalRegistrationStatus = '재등록' | '재등록 예정' | '미재등록';
+
 export interface RenewalTarget {
   id: string;
   branch: BranchType;
@@ -54,6 +56,10 @@ export interface RenewalTarget {
   age: number;
   phone: string;
   membership: string; // 보유 이용권
+  /** 상담 종목과 동일 옵션 (헬스권, PT, 스피닝 등) */
+  renewalCategory: string;
+  /** 재등록 진행 상태 */
+  renewalRegistrationStatus: RenewalRegistrationStatus;
   locker: string; // 락커룸/락커번호
   expiryDate: string; // 최종만료일
   lastAttendance: string; // 최근출석일

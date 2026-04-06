@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Users, UserPlus, RefreshCw, Home, Plus, FileUp, Calendar, Phone, 
   CheckCircle2, Clock, ChevronRight, Trash2, X, LogOut, ShieldCheck, 
-  Building2, AlertCircle, UserCheck, Edit2, LayoutGrid, Route, Percent
+  Building2, AlertCircle, UserCheck, Edit2, LayoutGrid, Route, Percent, Dumbbell, Wind
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -19,7 +19,17 @@ import {
   doc, getDoc, setDoc, updateDoc, collection, query, where, onSnapshot, 
   deleteDoc, getDocs 
 } from './firebase';
-import { NewConsultation, RenewalTarget, UserProfile, BranchType, UserRole, RemindInfo } from './types';
+import {
+  NewConsultation,
+  RenewalTarget,
+  RenewalRegistrationStatus,
+  UserProfile,
+  BranchType,
+  UserRole,
+  RemindInfo,
+} from './types';
+
+const RENEWAL_REGISTRATION_OPTIONS: RenewalRegistrationStatus[] = ['재등록', '재등록 예정', '미재등록'];
 
 const BRANCHES: BranchType[] = ['본사', '쌍문점', '외대점', '길동점', '시청점', '시청역점', '광화문점', '노원점'];
 const DISPLAY_BRANCHES = BRANCHES.filter(b => b !== '본사');
@@ -244,6 +254,125 @@ function NewConsultationAnalyticsDashboard({
   );
 }
 
+function normalizeRenewalTarget(docId: string, raw: Record<string, unknown>): RenewalTarget {
+  const d = raw as Partial<RenewalTarget>;
+  const st = d.renewalRegistrationStatus;
+  const status: RenewalRegistrationStatus =
+    st === '재등록' || st === '재등록 예정' || st === '미재등록' ? st : '미재등록';
+  return {
+    ...(d as RenewalTarget),
+    id: docId,
+    renewalCategory: (d.renewalCategory && String(d.renewalCategory).trim()) || '헬스권',
+    renewalRegistrationStatus: status,
+  };
+}
+
+function RenewalAnalyticsDashboard({ targets, monthLabel }: { targets: RenewalTarget[]; monthLabel: string }) {
+  const healthList = useMemo(() => targets.filter((t) => t.renewalCategory === '헬스권'), [targets]);
+  const spinList = useMemo(() => targets.filter((t) => t.renewalCategory === '스피닝'), [targets]);
+
+  const renewedOf = (list: RenewalTarget[]) => list.filter((t) => t.renewalRegistrationStatus === '재등록').length;
+  const rateOf = (list: RenewalTarget[]) =>
+    list.length === 0 ? 0 : Math.round((renewedOf(list) / list.length) * 100);
+
+  const overallRate = rateOf(targets);
+  const healthRate = rateOf(healthList);
+  const spinRate = rateOf(spinList);
+
+  if (targets.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-8 text-center text-sm text-slate-400">
+        {monthLabel} · 표시할 재등록 대상이 없습니다.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs font-semibold text-slate-500 px-0.5">재등록 인사이트 · {monthLabel}</p>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">총 재등록 대상</p>
+          <p className="mt-2 text-3xl font-black tabular-nums text-slate-900">{targets.length}명</p>
+          <p className="mt-2 text-[11px] text-slate-500">선택 월·지점 기준 목록</p>
+        </div>
+        <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-violet-700">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-100">
+              <Dumbbell size={16} />
+            </div>
+            <p className="text-[10px] font-bold uppercase tracking-wide">헬스 재등록 대상</p>
+          </div>
+          <p className="mt-2 text-3xl font-black tabular-nums text-violet-950">{healthList.length}명</p>
+          <p className="mt-1 text-[11px] text-violet-700/80">종목 「헬스권」</p>
+        </div>
+        <div className="rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 via-white to-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 text-cyan-700">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-100">
+              <Wind size={16} />
+            </div>
+            <p className="text-[10px] font-bold uppercase tracking-wide">스피닝 재등록 대상</p>
+          </div>
+          <p className="mt-2 text-3xl font-black tabular-nums text-cyan-950">{spinList.length}명</p>
+          <p className="mt-1 text-[11px] text-cyan-700/80">종목 「스피닝」</p>
+        </div>
+        <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 p-5 shadow-sm">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-800">전체 재등록율</p>
+          <p className="mt-1 text-3xl font-black tabular-nums text-emerald-950">{overallRate}%</p>
+          <p className="mt-1 text-xs font-semibold tabular-nums text-emerald-900">
+            재등록 {renewedOf(targets)} / {targets.length}명
+          </p>
+          <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white/90 shadow-inner">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500"
+              style={{ width: `${overallRate}%` }}
+            />
+          </div>
+        </div>
+      </div>
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h4 className="text-sm font-bold text-slate-800">재등록율 보드</h4>
+        <p className="mt-0.5 text-[11px] text-slate-500">상태가 「재등록」인 인원 ÷ 해당 그룹 전체 (막대 그래프)</p>
+        <div className="mt-4 grid gap-5 md:grid-cols-3">
+          <div>
+            <p className="mb-2 text-[10px] font-bold uppercase text-slate-500">전체</p>
+            <ConsultationMetricBar
+              label="전체 대상"
+              value={overallRate}
+              max={100}
+              suffix="%"
+              barClass="bg-gradient-to-r from-emerald-500 to-teal-500"
+              subLine={`재등록 ${renewedOf(targets)}명 / ${targets.length}명`}
+            />
+          </div>
+          <div>
+            <p className="mb-2 text-[10px] font-bold uppercase text-violet-600">헬스권</p>
+            <ConsultationMetricBar
+              label="헬스권"
+              value={healthRate}
+              max={100}
+              suffix="%"
+              barClass="bg-gradient-to-r from-violet-500 to-fuchsia-500"
+              subLine={`재등록 ${renewedOf(healthList)}명 / ${healthList.length}명`}
+            />
+          </div>
+          <div>
+            <p className="mb-2 text-[10px] font-bold uppercase text-cyan-600">스피닝</p>
+            <ConsultationMetricBar
+              label="스피닝"
+              value={spinRate}
+              max={100}
+              suffix="%"
+              barClass="bg-gradient-to-r from-cyan-500 to-sky-500"
+              subLine={`재등록 ${renewedOf(spinList)}명 / ${spinList.length}명`}
+            />
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 const formatPhoneNumber = (value: string) => {
   const digits = value.replace(/\D/g, '');
   if (digits.length <= 3) return digits;
@@ -289,6 +418,14 @@ export default function App() {
 
   const handleGenerateAI = async () => {
     if (!user || !editingRemind) return;
+    const apiKey = process.env.GEMINI_API_KEY?.trim?.() ?? '';
+    if (!apiKey) {
+      showToast(
+        'Gemini API 키가 없습니다. PC에 프로젝트 폴더에 .env 파일을 만들고 GEMINI_API_KEY=발급키 를 넣은 뒤 npm run build·배포하세요. GitHub 배포는 Actions 시크릿 GEMINI_API_KEY가 필요합니다.',
+        'error'
+      );
+      return;
+    }
     setIsGeneratingAI(true);
     try {
       const target = editingRemind.type === 'new' 
@@ -354,21 +491,35 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
 출력은 오직 문자 내용만 해주세요.`;
       }
 
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: 'gemini-2.5-flash',
         contents: prompt,
       });
 
-      const generatedText = response.text || '';
+      const generatedText = (response as { text?: string }).text?.trim() || '';
       const contentArea = document.getElementById('remind-content') as HTMLTextAreaElement;
       if (contentArea) {
         contentArea.value = generatedText;
       }
-      showToast('AI 문구가 생성되었습니다.');
+      if (!generatedText) {
+        showToast('응답이 비어 있습니다. 잠시 후 다시 시도하거나 API 할당량을 확인하세요.', 'error');
+      } else {
+        showToast('AI 문구가 생성되었습니다.');
+      }
     } catch (error) {
       console.error('AI generation error:', error);
-      showToast('AI 문구 생성 중 오류가 발생했습니다.', 'error');
+      const msg =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'object' && error !== null && 'message' in error
+            ? String((error as { message: unknown }).message)
+            : '';
+      const short =
+        msg.length > 120
+          ? `${msg.slice(0, 120)}…`
+          : msg || '알 수 없는 오류';
+      showToast(`AI 생성 실패: ${short}`, 'error');
     } finally {
       setIsGeneratingAI(false);
     }
@@ -493,8 +644,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
     });
 
     const unsubRenewals = onSnapshot(qRenewals, (snapshot) => {
-      const allData = snapshot.docs.map(doc => doc.data() as RenewalTarget);
-      const filtered = allData.filter(t => t.uploadMonth === selectedMonth);
+      const allData = snapshot.docs.map((d) => normalizeRenewalTarget(d.id, d.data() as Record<string, unknown>));
+      const filtered = allData.filter((t) => t.uploadMonth === selectedMonth);
       setRenewalTargets(filtered.sort((a, b) => (a.no || 0) - (b.no || 0)));
     });
 
@@ -790,6 +941,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
             age: Number(row[4]) || 0, // E열 (나이)
             phone: String(row[5] || '').trim(), // F열 (연락처)
             membership: String(row[6] || '').trim(), // G열 (보유 이용권)
+            renewalCategory: '헬스권',
+            renewalRegistrationStatus: '미재등록',
             locker: String(row[9] || '').trim(), // J열 (락커룸/번호)
             expiryDate: formatExcelDate(row[12]), // M열 (최종만료일)
             lastAttendance: formatExcelDate(row[15]), // P열 (최근출석일)
@@ -1012,6 +1165,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                 </div>
 
                 <NewConsultationAnalyticsDashboard consultations={newConsultations} monthLabel={boardMonthLabel} />
+
+                <RenewalAnalyticsDashboard targets={renewalTargets} monthLabel={boardMonthLabel} />
 
                 <section className="grid gap-6 md:grid-cols-3">
                   <div onClick={() => { setActiveTab('new'); setIsAddingNew(true); }} className="cursor-pointer transition-transform hover:scale-[1.02] active:scale-[0.98]">
@@ -1425,8 +1580,11 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                     </label>
                   </div>
                 </div>
+
+                <RenewalAnalyticsDashboard targets={renewalTargets} monthLabel={boardMonthLabel} />
+
                 <div className="rounded-2xl border bg-white shadow-sm overflow-hidden overflow-x-auto">
-                  <table className="w-full text-left min-w-[1200px]">
+                  <table className="w-full text-left min-w-[1380px]">
                     <thead className="bg-slate-50 border-b">
                       <tr>
                         <th className="px-4 py-4 w-10">
@@ -1449,6 +1607,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                         <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">나이</th>
                         <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">연락처</th>
                         <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">보유 이용권</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap">종목</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[120px]">재등록 상태</th>
                         <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">락커룸/번호</th>
                         <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-rose-500">최종만료일</th>
                         <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">최근출석일</th>
@@ -1481,7 +1641,46 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                           <td className="px-6 py-4 text-sm">{t.gender}</td>
                           <td className="px-6 py-4 text-sm">{t.age}세</td>
                           <td className="px-6 py-4 text-sm">{t.phone}</td>
-                          <td className="px-6 py-4 text-sm">{t.membership}</td>
+                          <td className="px-6 py-4 text-sm max-w-[140px]">{t.membership}</td>
+                          <td className="px-6 py-4">
+                            <select
+                              value={t.renewalCategory || '헬스권'}
+                              onChange={async (e) =>
+                                await updateDoc(doc(db, 'renewalTargets', t.id), { renewalCategory: e.target.value })
+                              }
+                              className="max-w-[120px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-100"
+                            >
+                              {CATEGORIES.map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-6 py-4">
+                            <select
+                              value={t.renewalRegistrationStatus || '미재등록'}
+                              onChange={async (e) =>
+                                await updateDoc(doc(db, 'renewalTargets', t.id), {
+                                  renewalRegistrationStatus: e.target.value as RenewalRegistrationStatus,
+                                })
+                              }
+                              className={cn(
+                                'w-full min-w-[108px] max-w-[130px] rounded-lg border px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-100',
+                                t.renewalRegistrationStatus === '재등록'
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                  : t.renewalRegistrationStatus === '재등록 예정'
+                                    ? 'border-amber-200 bg-amber-50 text-amber-900'
+                                    : 'border-slate-200 bg-slate-50 text-slate-600'
+                              )}
+                            >
+                              {RENEWAL_REGISTRATION_OPTIONS.map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
                           <td className="px-6 py-4 text-sm">{t.locker}</td>
                           <td className="px-6 py-4 text-sm font-bold text-rose-500">{t.expiryDate}</td>
                           <td className="px-6 py-4 text-sm">{t.lastAttendance}</td>
@@ -1788,6 +1987,9 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
             <form onSubmit={async (e) => {
               e.preventDefault();
               const fd = new FormData(e.currentTarget);
+              const rs = fd.get('renewalRegistrationStatus') as string;
+              const renewalRegistrationStatus: RenewalRegistrationStatus =
+                rs === '재등록' || rs === '재등록 예정' || rs === '미재등록' ? rs : '미재등록';
               const updates = {
                 no: Number(fd.get('no')) || editingRenewalTarget.no,
                 name: fd.get('name') as string,
@@ -1795,6 +1997,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                 age: Number(fd.get('age')) || 0,
                 phone: fd.get('phone') as string,
                 membership: fd.get('membership') as string,
+                renewalCategory: (fd.get('renewalCategory') as string) || '헬스권',
+                renewalRegistrationStatus,
                 locker: fd.get('locker') as string,
                 expiryDate: fd.get('expiryDate') as string,
                 lastAttendance: fd.get('lastAttendance') as string,
@@ -1830,6 +2034,34 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                 <div className="space-y-1.5">
                   <label className="text-sm font-bold text-slate-700">보유 이용권</label>
                   <input name="membership" defaultValue={editingRenewalTarget.membership} className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:ring-4 focus:ring-indigo-50 transition-all" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-bold text-slate-700">종목</label>
+                  <select
+                    name="renewalCategory"
+                    defaultValue={editingRenewalTarget.renewalCategory || '헬스권'}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:ring-4 focus:ring-indigo-50 transition-all"
+                  >
+                    {CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <label className="text-sm font-bold text-slate-700">재등록 상태</label>
+                  <select
+                    name="renewalRegistrationStatus"
+                    defaultValue={editingRenewalTarget.renewalRegistrationStatus || '미재등록'}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:ring-4 focus:ring-indigo-50 transition-all"
+                  >
+                    {RENEWAL_REGISTRATION_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-sm font-bold text-slate-700">락커룸/번호</label>
