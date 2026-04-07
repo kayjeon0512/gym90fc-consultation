@@ -45,7 +45,7 @@ export interface NewConsultation {
   createdBy: string;
 }
 
-export type RenewalRegistrationStatus = '재등록' | '재등록 예정' | '미재등록';
+export type RenewalRegistrationStatus = '재등록' | '재등록 예정' | '미재등록' | '재등록거부';
 
 export interface RenewalTarget {
   id: string;

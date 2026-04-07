@@ -29,7 +29,7 @@ import {
   RemindInfo,
 } from './types';
 
-const RENEWAL_REGISTRATION_OPTIONS: RenewalRegistrationStatus[] = ['재등록', '재등록 예정', '미재등록'];
+const RENEWAL_REGISTRATION_OPTIONS: RenewalRegistrationStatus[] = ['재등록', '재등록 예정', '미재등록', '재등록거부'];
 
 const BRANCHES: BranchType[] = ['본사', '쌍문점', '외대점', '길동점', '시청점', '시청역점', '광화문점', '노원점'];
 const DISPLAY_BRANCHES = BRANCHES.filter(b => b !== '본사');
@@ -271,7 +271,7 @@ function normalizeRenewalTarget(docId: string, raw: Record<string, unknown>): Re
   const d = raw as Partial<RenewalTarget>;
   const st = d.renewalRegistrationStatus;
   const status: RenewalRegistrationStatus =
-    st === '재등록' || st === '재등록 예정' || st === '미재등록' ? st : '미재등록';
+    st === '재등록' || st === '재등록 예정' || st === '미재등록' || st === '재등록거부' ? st : '미재등록';
   return {
     ...(d as RenewalTarget),
     id: docId,
@@ -2159,6 +2159,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                       <option value="미재등록">미재등록</option>
                       <option value="재등록 예정">재등록 예정</option>
                       <option value="재등록">재등록</option>
+                      <option value="재등록거부">재등록거부</option>
                     </select>
                     <select
                       value={renewalListCategoryFilter}
@@ -2300,6 +2301,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                                   ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                                   : t.renewalRegistrationStatus === '재등록 예정'
                                     ? 'border-amber-200 bg-amber-50 text-amber-900'
+                                    : t.renewalRegistrationStatus === '재등록거부'
+                                      ? 'border-rose-200 bg-rose-50 text-rose-800'
                                     : 'border-slate-200 bg-slate-50 text-slate-600'
                               )}
                             >
@@ -2651,7 +2654,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
               const fd = new FormData(e.currentTarget);
               const rs = fd.get('renewalRegistrationStatus') as string;
               const renewalRegistrationStatus: RenewalRegistrationStatus =
-                rs === '재등록' || rs === '재등록 예정' || rs === '미재등록' ? rs : '미재등록';
+                rs === '재등록' || rs === '재등록 예정' || rs === '미재등록' || rs === '재등록거부' ? rs : '미재등록';
               const updates = {
                 no: Number(fd.get('no')) || editingRenewalTarget.no,
                 name: fd.get('name') as string,
