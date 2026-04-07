@@ -62,9 +62,24 @@ service cloud.firestore {
 
     // User Rules
     match /users/{uid} {
-      allow read: if isAuthenticated() && (request.auth.uid == uid || isAdmin() || isDirector());
+      // Approved staff can read user profiles in the same branch (for consultant selection).
+      allow read: if isAuthenticated() && (
+        request.auth.uid == uid ||
+        isAdmin() ||
+        isDirector() ||
+        (isApproved() && getUserData().branch == resource.data.branch)
+      );
       allow create: if isAuthenticated() && request.auth.uid == uid;
-      allow update: if isAdmin();
+      // Admin can update anything. Staff can update only their own basic profile fields
+      // without changing privilege-related fields (role/isApproved) or identity fields (uid/email).
+      allow update: if isAdmin() || (
+        isAuthenticated() &&
+        request.auth.uid == uid &&
+        resource.data.uid == request.resource.data.uid &&
+        resource.data.email == request.resource.data.email &&
+        resource.data.role == request.resource.data.role &&
+        resource.data.isApproved == request.resource.data.isApproved
+      );
     }
 
     // Consultation Rules
@@ -80,7 +95,9 @@ service cloud.firestore {
       allow read: if isApproved() && (isAdmin() || isDirector() || getUserData().branch == resource.data.branch);
       allow create: if isApproved() && (isAdmin() || isDirector() || request.resource.data.branch == getUserData().branch);
       allow update: if isApproved() && (isAdmin() || isDirector() || getUserData().branch == resource.data.branch);
-      allow delete: if isAdmin();
+      // Approved staff can delete records in their own branch.
+      // Admin/Director can delete across branches.
+      allow delete: if isApproved() && (isAdmin() || isDirector() || getUserData().branch == resource.data.branch);
     }
   }
 }

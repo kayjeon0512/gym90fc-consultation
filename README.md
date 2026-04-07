@@ -10,11 +10,26 @@ View your app in AI Studio: https://ai.studio/apps/1a77a87e-039f-4e2d-af16-d960b
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
+**Prerequisites:** Node.js
 
+1. Install dependencies: `npm install`
+2. Create `.env` in the project root (see [.env.example](.env.example)):
+   `cp .env.example .env` then set `GEMINI_API_KEY=` to your key from [Google AI Studio](https://aistudio.google.com/apikey).
+3. Run the app: `npm run dev` (restart after changing `.env`).
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Verify the key without printing it: `npm run check:gemini`
+
+## Deploy (Firebase Hosting + GitHub Actions)
+
+Pushes to `main` / `master` deploy automatically. You can also run the workflow manually (**Actions → Deploy to Firebase Hosting → Run workflow**).
+
+**Repository secrets** (Settings → Secrets and variables → Actions):
+
+| Secret | Purpose |
+|--------|---------|
+| `GEMINI_API_KEY` | Baked into the production bundle for AI text generation |
+| `FIREBASE_SERVICE_ACCOUNT` | JSON key for Firebase deploy (Hosting) |
+
+Without `GEMINI_API_KEY`, the deploy workflow **fails at the check step** so the live site is not missing AI by mistake.
+
+**Local deploy** (after `.env` has your key): `npm run deploy`

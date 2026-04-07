@@ -1,0 +1,23 @@
+{
+  "name": "gym90fc-functions",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "serve": "npm run build && firebase emulators:start --only functions",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": "20"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.4.0",
+    "solapi": "^5.5.4"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.2"
+  }
+}
+

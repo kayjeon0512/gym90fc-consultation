@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Users, UserPlus, RefreshCw, Home, Plus, FileUp, Calendar, Phone, 
   CheckCircle2, Clock, ChevronRight, Trash2, X, LogOut, ShieldCheck, 
-  Building2, AlertCircle, UserCheck, Edit2, LayoutGrid, Route, Percent, Dumbbell, Wind
+  Building2, AlertCircle, UserCheck, Edit2, LayoutGrid, Route, Percent, Dumbbell, Wind, Copy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -50,6 +50,19 @@ const AI_SCHEDULE_CHOICES: { value: string; label: string }[] = [
   { value: '오늘 상담 일정', label: '오늘 상담' },
   { value: '추후 상담 일정', label: '추후 상담' },
 ];
+
+const GEMINI_MODEL_FALLBACKS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'] as const;
+
+function extractGeneratedText(response: {
+  text?: string;
+  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+}): string {
+  const fromGetter = typeof response.text === 'string' ? response.text.trim() : '';
+  if (fromGetter) return fromGetter;
+  const parts = response.candidates?.[0]?.content?.parts;
+  if (!parts?.length) return '';
+  return parts.map((p) => (typeof p?.text === 'string' ? p.text : '')).join('').trim();
+}
 
 type CountBarItem = { label: string; count: number };
 
@@ -387,6 +400,7 @@ export default function App() {
   const [newConsultations, setNewConsultations] = useState<NewConsultation[]>([]);
   const [renewalTargets, setRenewalTargets] = useState<RenewalTarget[]>([]);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
+  const [branchUsers, setBranchUsers] = useState<UserProfile[]>([]);
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState<BranchType | '전체'>('전체');
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
@@ -395,25 +409,101 @@ export default function App() {
   const [editingConsultation, setEditingConsultation] = useState<NewConsultation | null>(null);
   const [editingRemind, setEditingRemind] = useState<{ id: string, type: 'new' | 'renewal', remindIdx: number } | null>(null);
   const [editingRenewalTarget, setEditingRenewalTarget] = useState<RenewalTarget | null>(null);
+  const [isCreatingRenewalTarget, setIsCreatingRenewalTarget] = useState(false);
   const [selectedRenewalIds, setSelectedRenewalIds] = useState<string[]>([]);
   const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean, title: string, message: string, onConfirm: () => void } | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [visitType, setVisitType] = useState<'당일' | '예약'>('당일');
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [isNavCollapsed, setIsNavCollapsed] = useState(false);
   const [aiOptions, setAiOptions] = useState({
     tone: '상냥하게',
     benefit: '마감임박',
     schedule: '오늘 상담 일정',
     additionalInfo: ''
   });
+  const [remindModalContent, setRemindModalContent] = useState('');
+  const [newListSearch, setNewListSearch] = useState('');
+  const [newListRegFilter, setNewListRegFilter] = useState<'전체' | NewConsultation['registrationStatus']>('전체');
+  const [newListCategoryFilter, setNewListCategoryFilter] = useState<'전체' | string>('전체');
+  const [newListVisitPathFilter, setNewListVisitPathFilter] = useState<'전체' | string>('전체');
+  const [newListSortKey, setNewListSortKey] = useState<'createdAt' | 'visitDate' | 'scheduledDate' | 'name'>('createdAt');
+  const [newListSortDir, setNewListSortDir] = useState<'desc' | 'asc'>('desc');
+
+  const [renewalListSearch, setRenewalListSearch] = useState('');
+  const [renewalListStatusFilter, setRenewalListStatusFilter] = useState<'전체' | RenewalRegistrationStatus>('전체');
+  const [renewalListCategoryFilter, setRenewalListCategoryFilter] = useState<'전체' | string>('전체');
+  const [renewalListSortKey, setRenewalListSortKey] = useState<'no' | 'expiryDate' | 'name'>('no');
+  const [renewalListSortDir, setRenewalListSortDir] = useState<'asc' | 'desc'>('asc');
+
+  useEffect(() => {
+    if (!editingRemind) setRemindModalContent('');
+  }, [editingRemind]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   };
 
+  const copyRemindContentToClipboard = async () => {
+    const text = remindModalContent.trim();
+    if (!text) {
+      showToast('복사할 내용이 없습니다.', 'error');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('클립보드에 복사했습니다.');
+    } catch {
+      showToast('복사에 실패했습니다. 브라우저에서 클립보드 권한을 허용해 주세요.', 'error');
+    }
+  };
+
   const showConfirm = (title: string, message: string, onConfirm: () => void) => {
     setConfirmModal({ isOpen: true, title, message, onConfirm });
+  };
+
+  const canDeleteRecords = user?.role === 'admin';
+  const canDeleteRenewalTargets = !!user?.isApproved;
+
+  const openCreateRenewalTarget = () => {
+    if (!user) return;
+    let targetBranch = user.branch;
+    if ((user.role === 'admin' || user.role === 'director') && selectedBranch !== '전체') {
+      targetBranch = selectedBranch as BranchType;
+    }
+    if (targetBranch === '본사') {
+      showToast('본사는 지점이 아니므로 재등록 대상을 추가할 수 없습니다. 상단에서 지점을 선택해주세요.', 'error');
+      return;
+    }
+    if ((user.role === 'admin' || user.role === 'director') && selectedBranch === '전체') {
+      showToast('상단에서 지점을 선택한 뒤 추가해주세요.', 'error');
+      return;
+    }
+
+    const nextNo =
+      renewalTargets.length > 0 ? Math.max(...renewalTargets.map((t) => t.no || 0)) + 1 : 1;
+    setIsCreatingRenewalTarget(true);
+    setEditingRenewalTarget({
+      id: crypto.randomUUID(),
+      branch: targetBranch,
+      no: nextNo,
+      name: '',
+      gender: '여',
+      age: 0,
+      phone: '',
+      membership: '',
+      renewalCategory: '헬스권',
+      renewalRegistrationStatus: '미재등록',
+      locker: '',
+      expiryDate: '',
+      lastAttendance: '',
+      remind1: { type: '', content: '', completed: false },
+      remind2: { type: '', content: '', completed: false },
+      remind3: { type: '', content: '', completed: false },
+      uploadMonth: selectedMonth,
+      uploadedBy: user.uid,
+    });
   };
 
   const handleGenerateAI = async () => {
@@ -492,16 +582,23 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-      });
-
-      const generatedText = (response as { text?: string }).text?.trim() || '';
-      const contentArea = document.getElementById('remind-content') as HTMLTextAreaElement;
-      if (contentArea) {
-        contentArea.value = generatedText;
+      let generatedText = '';
+      let lastError: unknown;
+      for (const model of GEMINI_MODEL_FALLBACKS) {
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: prompt,
+          });
+          generatedText = extractGeneratedText(response);
+          if (generatedText) break;
+        } catch (e) {
+          lastError = e;
+        }
       }
+      if (!generatedText && lastError) throw lastError;
+
+      setRemindModalContent(generatedText);
       if (!generatedText) {
         showToast('응답이 비어 있습니다. 잠시 후 다시 시도하거나 API 할당량을 확인하세요.', 'error');
       } else {
@@ -665,10 +762,102 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
     }
   }, [user, activeTab]);
 
+  // Branch users: For consultant selection in new consultations
+  useEffect(() => {
+    if (!user?.isApproved) return;
+    let targetBranch = user.branch;
+    if ((user.role === 'admin' || user.role === 'director') && selectedBranch !== '전체') {
+      targetBranch = selectedBranch as BranchType;
+    }
+    if (targetBranch === '본사' || selectedBranch === '전체') {
+      setBranchUsers([]);
+      return;
+    }
+    const q = query(collection(db, 'users'), where('branch', '==', targetBranch));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const users = snapshot.docs.map((d) => d.data() as UserProfile);
+      setBranchUsers(users.filter((u) => u.isApproved).sort((a, b) => a.displayName.localeCompare(b.displayName)));
+    });
+    return unsub;
+  }, [user, selectedBranch]);
+
   // Clear selectedRenewalIds when filters change
   useEffect(() => {
     setSelectedRenewalIds([]);
   }, [selectedMonth, selectedBranch, activeTab]);
+
+  const displayedNewConsultations = useMemo(() => {
+    const q = newListSearch.trim().toLowerCase();
+    const norm = (s: unknown) => String(s ?? '').toLowerCase();
+    const digits = (s: unknown) => String(s ?? '').replace(/\D/g, '');
+
+    let list = newConsultations.slice();
+    if (q) {
+      const qDigits = q.replace(/\D/g, '');
+      list = list.filter((c) => {
+        const nameHit = norm(c.name).includes(q);
+        const phoneHit = qDigits ? digits(c.contact).includes(qDigits) || digits(c.phone).includes(qDigits) : false;
+        return nameHit || phoneHit;
+      });
+    }
+    if (newListRegFilter !== '전체') list = list.filter((c) => (c.registrationStatus || '미등록') === newListRegFilter);
+    if (newListCategoryFilter !== '전체') list = list.filter((c) => (c.category || '').trim() === newListCategoryFilter);
+    if (newListVisitPathFilter !== '전체') list = list.filter((c) => (c.visitPath || '').trim() === newListVisitPathFilter);
+
+    const key = newListSortKey;
+    const dir = newListSortDir === 'asc' ? 1 : -1;
+    list.sort((a, b) => {
+      if (key === 'name') return a.name.localeCompare(b.name) * dir;
+      const av = (a[key] || '') as string;
+      const bv = (b[key] || '') as string;
+      return av.localeCompare(bv) * dir;
+    });
+    return list;
+  }, [
+    newConsultations,
+    newListSearch,
+    newListRegFilter,
+    newListCategoryFilter,
+    newListVisitPathFilter,
+    newListSortKey,
+    newListSortDir,
+  ]);
+
+  const displayedRenewalTargets = useMemo(() => {
+    const q = renewalListSearch.trim().toLowerCase();
+    const norm = (s: unknown) => String(s ?? '').toLowerCase();
+    const digits = (s: unknown) => String(s ?? '').replace(/\D/g, '');
+
+    let list = renewalTargets.slice();
+    if (q) {
+      const qDigits = q.replace(/\D/g, '');
+      list = list.filter((t) => {
+        const nameHit = norm(t.name).includes(q);
+        const phoneHit = qDigits ? digits(t.phone).includes(qDigits) : false;
+        return nameHit || phoneHit;
+      });
+    }
+    if (renewalListStatusFilter !== '전체') list = list.filter((t) => t.renewalRegistrationStatus === renewalListStatusFilter);
+    if (renewalListCategoryFilter !== '전체') list = list.filter((t) => (t.renewalCategory || '').trim() === renewalListCategoryFilter);
+
+    const key = renewalListSortKey;
+    const dir = renewalListSortDir === 'asc' ? 1 : -1;
+    list.sort((a, b) => {
+      if (key === 'no') return ((a.no || 0) - (b.no || 0)) * dir;
+      if (key === 'name') return a.name.localeCompare(b.name) * dir;
+      const av = (a[key] || '') as string;
+      const bv = (b[key] || '') as string;
+      return av.localeCompare(bv) * dir;
+    });
+    return list;
+  }, [
+    renewalTargets,
+    renewalListSearch,
+    renewalListStatusFilter,
+    renewalListCategoryFilter,
+    renewalListSortKey,
+    renewalListSortDir,
+  ]);
 
   const handleLogin = async () => {
     try {
@@ -692,15 +881,27 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
   const handleRegisterStaff = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!user) return;
-    const formData = new FormData(e.currentTarget);
-    const updates = {
-      displayName: formData.get('name') as string,
-      phoneNumber: formData.get('phone') as string,
-      position: formData.get('position') as string,
-      branch: formData.get('branch') as BranchType,
-    };
-    await updateDoc(doc(db, 'users', user.uid), updates);
-    setUser({ ...user, ...updates });
+    try {
+      const formData = new FormData(e.currentTarget);
+      const updates = {
+        displayName: String(formData.get('name') || '').trim(),
+        phoneNumber: String(formData.get('phone') || '').trim(),
+        position: String(formData.get('position') || '').trim(),
+        branch: formData.get('branch') as BranchType,
+      };
+      await updateDoc(doc(db, 'users', user.uid), updates);
+      setUser({ ...user, ...updates });
+      showToast('등록이 완료되었습니다. 관리자 승인 후 이용 가능합니다.');
+    } catch (error) {
+      console.error('Staff registration error:', error);
+      const msg =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'object' && error !== null && 'message' in error
+            ? String((error as { message: unknown }).message)
+            : '';
+      showToast(msg ? `등록 실패: ${msg}` : '등록에 실패했습니다. 권한/네트워크를 확인해주세요.', 'error');
+    }
   };
 
   const handleApproveUser = async (uid: string, isApproved: boolean) => {
@@ -713,6 +914,10 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
 
   const handleDeleteSelectedRenewals = async () => {
     if (selectedRenewalIds.length === 0) return;
+    if (!canDeleteRenewalTargets) {
+      showToast('삭제 권한이 없습니다. 승인된 사용자만 삭제할 수 있습니다.', 'error');
+      return;
+    }
     showConfirm(
       '선택 삭제',
       `선택한 ${selectedRenewalIds.length}명의 데이터를 삭제하시겠습니까?`,
@@ -725,7 +930,18 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
           showToast('삭제되었습니다.');
         } catch (error) {
           console.error('Error deleting selected renewals:', error);
-          showToast('삭제 중 오류가 발생했습니다.', 'error');
+          const msg =
+            error instanceof Error
+              ? error.message
+              : typeof error === 'object' && error !== null && 'message' in error
+                ? String((error as { message: unknown }).message)
+                : '';
+          showToast(
+            msg.includes('permission')
+              ? '삭제 권한이 없습니다. (지점 권한/승인 상태를 확인해주세요)'
+              : '삭제 중 오류가 발생했습니다.',
+            'error'
+          );
         }
       }
     );
@@ -733,6 +949,10 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
 
   const handleDeleteAllRenewals = async () => {
     if (renewalTargets.length === 0) return;
+    if (!canDeleteRenewalTargets) {
+      showToast('삭제 권한이 없습니다. 승인된 사용자만 삭제할 수 있습니다.', 'error');
+      return;
+    }
     showConfirm(
       '전체 삭제',
       '현재 목록의 모든 데이터를 삭제하시겠습니까?',
@@ -745,7 +965,18 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
           showToast('모든 데이터가 삭제되었습니다.');
         } catch (error) {
           console.error('Error deleting all renewals:', error);
-          showToast('삭제 중 오류가 발생했습니다.', 'error');
+          const msg =
+            error instanceof Error
+              ? error.message
+              : typeof error === 'object' && error !== null && 'message' in error
+                ? String((error as { message: unknown }).message)
+                : '';
+          showToast(
+            msg.includes('permission')
+              ? '삭제 권한이 없습니다. (지점 권한/승인 상태를 확인해주세요)'
+              : '삭제 중 오류가 발생했습니다.',
+            'error'
+          );
         }
       }
     );
@@ -852,7 +1083,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
       category: fd.get('category') as string,
       visitPath: fd.get('visitPath') as string,
       content: mergedContent,
-      consultant: user.displayName,
+      consultant: (fd.get('consultant') as string) || user.displayName,
       isCompleted: editingConsultation ? editingConsultation.isCompleted : false,
       createdBy: editingConsultation ? editingConsultation.createdBy : user.uid
     } as NewConsultation;
@@ -911,6 +1142,13 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
 
         console.log('Starting Excel upload processing...', rows.length, 'rows found.');
 
+        const inferRenewalCategory = (membershipText: string): string => {
+          const s = (membershipText || '').toLowerCase();
+          // 요청사항: 보유이용권에 '스피닝' 단어가 있으면 무조건 스피닝, 그 외(없거나 헬스권/PT만)는 헬스권
+          if (s.includes('스피닝') || s.includes('spinning')) return '스피닝';
+          return '헬스권';
+        };
+
         for (const row of rows) {
           // Skip empty rows (check if name exists in column A/index 0 or B/index 1)
           const name = String(row[1] || row[0] || '').trim();
@@ -932,6 +1170,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
           };
 
           const id = crypto.randomUUID();
+          const membership = String(row[6] || '').trim(); // G열 (보유 이용권)
           const target: RenewalTarget = {
             id,
             branch: targetBranch,
@@ -940,8 +1179,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
             gender: String(row[2] || '').trim(), // C열 (성별)
             age: Number(row[4]) || 0, // E열 (나이)
             phone: String(row[5] || '').trim(), // F열 (연락처)
-            membership: String(row[6] || '').trim(), // G열 (보유 이용권)
-            renewalCategory: '헬스권',
+            membership,
+            renewalCategory: inferRenewalCategory(membership),
             renewalRegistrationStatus: '미재등록',
             locker: String(row[9] || '').trim(), // J열 (락커룸/번호)
             expiryDate: formatExcelDate(row[12]), // M열 (최종만료일)
@@ -965,6 +1204,141 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
     reader.onerror = () => {
       showToast('파일을 읽는 중 오류가 발생했습니다.', 'error');
     };
+    reader.readAsBinaryString(file);
+  };
+
+  const handleConsultationExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    let targetBranch = user.branch;
+    if ((user.role === 'admin' || user.role === 'director') && selectedBranch !== '전체') {
+      targetBranch = selectedBranch as BranchType;
+    }
+    if (targetBranch === '본사') {
+      showToast('지점을 먼저 선택해주세요.', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+
+        if (data.length <= 1) {
+          showToast('엑셀/CSV 파일에 데이터가 없거나 헤더만 존재합니다.', 'error');
+          return;
+        }
+
+        const rows = data.slice(1);
+
+        const formatExcelDate = (val: any) => {
+          if (!val) return '';
+          if (typeof val === 'number') {
+            try {
+              const date = new Date((val - 25569) * 86400 * 1000);
+              return format(date, 'yyyy-MM-dd');
+            } catch {
+              return String(val);
+            }
+          }
+          const s = String(val).trim();
+          // ex) 26.4.1 → 2026-04-01
+          const m = s.match(/^(\d{2})\.(\d{1,2})\.(\d{1,2})$/);
+          if (m) {
+            const yy = 2000 + Number(m[1]);
+            const mm = String(Number(m[2])).padStart(2, '0');
+            const dd = String(Number(m[3])).padStart(2, '0');
+            return `${yy}-${mm}-${dd}`;
+          }
+          return s;
+        };
+
+        let saved = 0;
+        for (const row of rows) {
+          /**
+           * 엑셀 컬럼 매핑 (사용자 지정)
+           * - B열(1): 등록 여부
+           * - C열(2): 방문 예정일
+           * - D열(3): 방문일
+           * - E열(4): 성함
+           * - F열(5): 남/여 (선택)
+           * - G열(6): 연락처
+           * - H열(7): 종목
+           *
+           * 그 외 컬럼은 있으면 자동 보조:
+           * - I열(8): 방문경로
+           * - J열(9): 상담내용(메모)
+           * - K열(10): 상담자
+           * - A열(0): 작성일 (없으면 오늘)
+           */
+          const name = String(row[4] ?? '').trim();
+          if (!name || name === '성함' || name === '이름') continue;
+
+          const rawReg = String(row[1] ?? '').trim();
+          const registrationStatus: NewConsultation['registrationStatus'] =
+            rawReg === '등록' ? '등록' : rawReg === '등록예정' ? '등록예정' : '미등록';
+
+          const phone = String(row[6] ?? '').trim();
+          const category = String(row[7] ?? '').trim();
+          const visitPath = String(row[8] ?? '').trim();
+          const memo = String(row[9] ?? '').trim();
+          const consultant = String(row[10] ?? '').trim();
+
+          const createdAt = formatExcelDate(row[0]) || format(new Date(), 'yyyy-MM-dd');
+          const month = (createdAt || '').slice(0, 7) || format(new Date(), 'yyyy-MM');
+
+          const scheduledDate = formatExcelDate(row[2]);
+          const visitDate = formatExcelDate(row[3]);
+
+          const genderRaw = String(row[5] ?? '').trim();
+          const gender: '남' | '여' = genderRaw === '남' ? '남' : '여';
+
+          const id = crypto.randomUUID();
+          const mergedContent = memo
+            ? `[운동목적] \n[운동경험] \n[부상이력] \n[운동계획] \n[기타내용] ${memo}`
+            : `[운동목적] \n[운동경험] \n[부상이력] \n[운동계획] \n[기타내용] `;
+
+          const newItem: NewConsultation = {
+            id,
+            branch: targetBranch,
+            createdAt,
+            month,
+            registrationStatus,
+            remind1: { type: '', content: '', completed: false },
+            remind2: { type: '', content: '', completed: false },
+            remind3: { type: '', content: '', completed: false },
+            name,
+            contact: phone,
+            visitDate: visitDate || '',
+            visitTime: '',
+            scheduledDate: scheduledDate || '',
+            scheduledTime: '',
+            gender,
+            phone,
+            category,
+            visitPath,
+            content: mergedContent,
+            consultant: consultant || user.displayName,
+            isCompleted: false,
+            createdBy: user.uid,
+          };
+
+          await setDoc(doc(db, 'consultations', id), newItem);
+          saved += 1;
+        }
+
+        showToast(`${saved}건의 신규상담이 업로드되었습니다.`);
+        e.target.value = '';
+      } catch (error) {
+        console.error('Consultation Excel upload error:', error);
+        showToast('엑셀/CSV 파일 처리 중 오류가 발생했습니다. 파일 형식을 확인해주세요.', 'error');
+      }
+    };
+    reader.onerror = () => showToast('파일을 읽는 중 오류가 발생했습니다.', 'error');
     reader.readAsBinaryString(file);
   };
 
@@ -1082,38 +1456,63 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
       {/* Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t bg-white p-4 shadow-lg md:top-0 md:bottom-auto md:flex-col md:justify-start md:gap-8 md:border-r md:border-t-0 md:w-64 md:h-full">
-        <div className="hidden md:flex flex-col items-center gap-4 px-4 py-6 w-full">
+      <nav
+        className={cn(
+          "fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t bg-white p-4 shadow-lg",
+          "md:top-0 md:bottom-auto md:left-0 md:right-auto md:flex-col md:justify-start md:gap-6 md:border-r md:border-t-0 md:h-full md:transition-[width] md:duration-200",
+          isNavCollapsed ? "md:w-16" : "md:w-64"
+        )}
+      >
+        <div className={cn("hidden md:flex flex-col items-center gap-4 px-4 py-6 w-full", isNavCollapsed && "px-2")}>
           <div className="flex items-center gap-3 w-full">
             <div className="h-10 w-10 shrink-0 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-lg">
               <Users size={24} />
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-800 truncate">Gym 90 FC</h1>
+            {!isNavCollapsed && <h1 className="text-xl font-bold tracking-tight text-slate-800 truncate">Gym 90 FC</h1>}
           </div>
-          <div className="w-full rounded-xl bg-slate-50 p-3 flex items-center gap-3">
-            <img src={user.photoURL} alt="" className="h-8 w-8 rounded-full" referrerPolicy="no-referrer" />
-            <div className="min-w-0">
-              <p className="text-xs font-bold text-slate-800 truncate">{user.displayName}</p>
-              <p className="text-[10px] text-slate-500">{user.branch} / {user.role}</p>
+          {!isNavCollapsed && (
+            <div className="w-full rounded-xl bg-slate-50 p-3 flex items-center gap-3">
+              <img src={user.photoURL} alt="" className="h-8 w-8 rounded-full" referrerPolicy="no-referrer" />
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-800 truncate">{user.displayName}</p>
+                <p className="text-[10px] text-slate-500">{user.branch} / {user.role}</p>
+              </div>
             </div>
-          </div>
+          )}
+          {/* Hide/Show menu button: not shown on Home */}
+          {activeTab !== 'home' && (
+            <button
+              type="button"
+              onClick={() => setIsNavCollapsed((v) => !v)}
+              className={cn(
+                "mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-all",
+                isNavCollapsed && "px-0"
+              )}
+              title={isNavCollapsed ? '메뉴 펼치기' : '메뉴 숨기기'}
+            >
+              <span className={cn("flex items-center justify-center gap-2", isNavCollapsed && "gap-0")}>
+                <ChevronRight size={18} className={cn("transition-transform", isNavCollapsed ? "rotate-180" : "")} />
+                {!isNavCollapsed && <span>메뉴 숨기기</span>}
+              </span>
+            </button>
+          )}
         </div>
 
-        <div className="flex w-full justify-around md:flex-col md:gap-2 md:px-2">
-          <NavItem active={activeTab === 'home'} onClick={() => setActiveTab('home')} icon={<Home size={20} />} label="홈" />
-          <NavItem active={activeTab === 'new'} onClick={() => setActiveTab('new')} icon={<UserPlus size={20} />} label="신규상담" />
-          <NavItem active={activeTab === 'renewal'} onClick={() => setActiveTab('renewal')} icon={<RefreshCw size={20} />} label="재등록관리" />
+        <div className={cn("flex w-full justify-around md:flex-col md:gap-2 md:px-2", isNavCollapsed && "md:px-1")}>
+          <NavItem collapsed={isNavCollapsed} active={activeTab === 'home'} onClick={() => setActiveTab('home')} icon={<Home size={20} />} label="홈" />
+          <NavItem collapsed={isNavCollapsed} active={activeTab === 'new'} onClick={() => setActiveTab('new')} icon={<UserPlus size={20} />} label="신규상담" />
+          <NavItem collapsed={isNavCollapsed} active={activeTab === 'renewal'} onClick={() => setActiveTab('renewal')} icon={<RefreshCw size={20} />} label="재등록관리" />
           {user.role === 'admin' && (
-            <NavItem active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} icon={<ShieldCheck size={20} />} label="관리자" />
+            <NavItem collapsed={isNavCollapsed} active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} icon={<ShieldCheck size={20} />} label="관리자" />
           )}
-          <button onClick={handleLogout} className="flex flex-col items-center gap-1 px-4 py-2 text-slate-400 hover:text-rose-600 md:flex-row md:gap-3 md:w-full md:px-4 md:py-3 mt-auto">
+          <button onClick={handleLogout} className={cn("flex flex-col items-center gap-1 px-4 py-2 text-slate-400 hover:text-rose-600 md:flex-row md:gap-3 md:w-full md:px-4 md:py-3 mt-auto", isNavCollapsed && "md:justify-center md:px-0")}>
             <LogOut size={20} />
-            <span className="text-[10px] font-bold md:text-sm">로그아웃</span>
+            {!isNavCollapsed && <span className="text-[10px] font-bold md:text-sm">로그아웃</span>}
           </button>
         </div>
       </nav>
 
-      <main className="pb-24 md:pb-0 md:pl-64 min-h-screen">
+      <main className={cn("pb-24 md:pb-0 min-h-screen", isNavCollapsed ? "md:pl-16" : "md:pl-64")}>
         <div className="mx-auto max-w-6xl p-6">
           <AnimatePresence mode="wait">
             {activeTab === 'home' && (
@@ -1242,9 +1641,20 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                       목록으로 돌아가기
                     </button>
                   ) : (
-                    <button onClick={() => { setEditingConsultation(null); setConsultationPhone(''); setIsAddingNew(true); }} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 font-semibold text-white shadow-lg">
-                      <Plus size={20} /> 상담 추가
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <label className="flex cursor-pointer items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 font-semibold text-white shadow-lg hover:bg-emerald-700 transition-all">
+                        <FileUp size={20} /> 엑셀/CSV 업로드
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept=".xlsx, .xls, .csv"
+                          onChange={handleConsultationExcelUpload}
+                        />
+                      </label>
+                      <button onClick={() => { setEditingConsultation(null); setConsultationPhone(''); setIsAddingNew(true); }} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 font-semibold text-white shadow-lg">
+                        <Plus size={20} /> 상담 추가
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -1291,6 +1701,21 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                                   onChange={(e) => setConsultationPhone(formatPhoneNumber(e.target.value))}
                                   className="w-full rounded-xl border border-slate-200 px-4 py-3 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 outline-none transition-all" 
                                 />
+                              </div>
+                              <div className="space-y-1.5">
+                                <label className="text-sm font-bold text-slate-700">상담자</label>
+                                <input
+                                  name="consultant"
+                                  list="branch-consultants"
+                                  defaultValue={editData?.consultant || user.displayName}
+                                  placeholder="예: 김가영"
+                                  className="w-full rounded-xl border border-slate-200 px-4 py-3 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 outline-none transition-all"
+                                />
+                                <datalist id="branch-consultants">
+                                  {(branchUsers.length > 0 ? branchUsers : [user]).map((u) => (
+                                    <option key={u.uid} value={u.displayName} />
+                                  ))}
+                                </datalist>
                               </div>
                               <div className="space-y-1.5">
                                 <label className="text-sm font-bold text-slate-700">방문 유형</label>
@@ -1428,30 +1853,107 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                     </form>
                   </motion.div>
                 ) : (
+                  <>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="text-sm font-semibold text-slate-500">
+                          총 {displayedNewConsultations.length}명
+                        </div>
+                        <input
+                          value={newListSearch}
+                          onChange={(e) => setNewListSearch(e.target.value)}
+                          placeholder="이름/번호 검색"
+                          className="h-10 w-48 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-indigo-50"
+                        />
+                        <select
+                          value={newListRegFilter}
+                          onChange={(e) => setNewListRegFilter(e.target.value as any)}
+                          className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-indigo-50"
+                        >
+                          <option value="전체">등록상태 전체</option>
+                          <option value="미등록">미등록</option>
+                          <option value="등록">등록</option>
+                          <option value="등록예정">등록예정</option>
+                        </select>
+                        <select
+                          value={newListCategoryFilter}
+                          onChange={(e) => setNewListCategoryFilter(e.target.value)}
+                          className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-indigo-50"
+                        >
+                          <option value="전체">종목 전체</option>
+                          {CATEGORIES.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={newListVisitPathFilter}
+                          onChange={(e) => setNewListVisitPathFilter(e.target.value)}
+                          className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-indigo-50"
+                        >
+                          <option value="전체">방문경로 전체</option>
+                          {VISIT_PATHS.map((p) => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={newListSortKey}
+                          onChange={(e) => setNewListSortKey(e.target.value as any)}
+                          className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-indigo-50"
+                        >
+                          <option value="createdAt">작성일</option>
+                          <option value="visitDate">방문일</option>
+                          <option value="scheduledDate">예정일</option>
+                          <option value="name">성함</option>
+                        </select>
+                        <select
+                          value={newListSortDir}
+                          onChange={(e) => setNewListSortDir(e.target.value as any)}
+                          className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-indigo-50"
+                        >
+                          <option value="desc">내림차순</option>
+                          <option value="asc">오름차순</option>
+                        </select>
+                      </div>
+                      <label className="flex cursor-pointer items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 font-semibold text-white shadow-lg hover:bg-emerald-700 transition-all">
+                        <FileUp size={18} /> 엑셀/CSV 업로드
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept=".xlsx, .xls, .csv"
+                          onChange={handleConsultationExcelUpload}
+                        />
+                      </label>
+                    </div>
                   <div className="rounded-2xl border bg-white shadow-sm overflow-hidden overflow-x-auto">
-                    <table className="w-full text-left min-w-[1100px]">
+                    <table className="w-full text-left min-w-[1500px]">
                       <thead className="bg-slate-50 border-b">
                         <tr>
-                          <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">지점 / 성함</th>
+                          <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[140px]">지점 / 성함</th>
                           <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap">종목</th>
-                          <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">연락처 / 성별</th>
-                          <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">방문일 / 예정일</th>
+                          <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[160px]">연락처 / 성별</th>
+                          <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[180px]">방문일 / 예정일</th>
                           <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">등록상태</th>
+                          <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase min-w-[220px]">기타메모</th>
+                          <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap">상담자</th>
                           <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase min-w-[220px]">리마인드 (미등록 시)</th>
                           <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-right">관리</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {newConsultations.map((c) => (
+                        {displayedNewConsultations.map((c) => (
                           <tr key={c.id} className={cn("hover:bg-slate-50 transition-colors", c.month < selectedMonth && "bg-amber-50/30", c.isCompleted && "opacity-60")}>
-                            <td className="px-6 py-4">
-                              <div className="flex items-center gap-2">
-                                <div className="text-xs text-slate-400">{c.branch}</div>
+                            <td className="px-6 py-4 whitespace-nowrap min-w-[140px]">
+                              <div className="flex items-center gap-2 whitespace-nowrap">
+                                <div className="text-xs text-slate-400 whitespace-nowrap">{c.branch}</div>
                                 {c.month < selectedMonth && (
                                   <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">이월</span>
                                 )}
                               </div>
-                              <div className="font-bold">{c.name}</div>
+                              <div className="font-bold whitespace-nowrap">{c.name}</div>
                             </td>
                             <td className="px-6 py-4 text-sm font-semibold text-indigo-700 whitespace-nowrap">{c.category || '미지정'}</td>
                             <td className="px-6 py-4 text-sm">{c.contact}<br/><span className="text-xs text-slate-400">{c.gender}</span></td>
@@ -1475,6 +1977,14 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                                 <option value="등록예정">등록예정</option>
                               </select>
                             </td>
+                            <td className="px-6 py-4 text-xs text-slate-600 max-w-[360px]">
+                              <div className="line-clamp-2">
+                                {parseMergedContent(c.content).other || '-'}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-xs font-bold text-slate-700 whitespace-nowrap">
+                              {c.consultant || '-'}
+                            </td>
                             <td className="px-6 py-4">
                               {c.registrationStatus === '미등록' && (
                                 <div className="flex items-center gap-3">
@@ -1484,7 +1994,10 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                                       return (
                                         <div key={num} className="flex flex-col items-center gap-1">
                                           <button 
-                                            onClick={() => setEditingRemind({ id: c.id, type: 'new', remindIdx: idx })}
+                                            onClick={() => {
+                                              setRemindModalContent(remind?.content ?? '');
+                                              setEditingRemind({ id: c.id, type: 'new', remindIdx: idx });
+                                            }}
                                             className={cn(
                                               "text-[10px] font-bold px-2 py-1 rounded border transition-all whitespace-nowrap",
                                               remind?.completed 
@@ -1508,18 +2021,34 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                             <td className="px-6 py-4 text-right">
                               <div className="flex items-center justify-end gap-2">
                                 <button onClick={() => startEditing(c)} className="p-2 text-slate-400 hover:text-indigo-600"><Edit2 size={18} /></button>
-                                <button onClick={() => {
-                                  showConfirm(
-                                    '삭제 확인',
-                                    '정말 삭제하시겠습니까?',
-                                    async () => {
-                                      await deleteDoc(doc(db, 'consultations', c.id));
-                                      showToast('삭제되었습니다.');
-                                    }
-                                  );
-                                }} className="p-2 text-slate-400 hover:text-rose-600 transition-all">
-                                  <Trash2 size={18} />
-                                </button>
+                                {canDeleteRecords && (
+                                  <button onClick={() => {
+                                    showConfirm(
+                                      '삭제 확인',
+                                      '정말 삭제하시겠습니까?',
+                                      async () => {
+                                        try {
+                                          await deleteDoc(doc(db, 'consultations', c.id));
+                                          showToast('삭제되었습니다.');
+                                        } catch (error) {
+                                          console.error('Error deleting consultation:', error);
+                                          const msg =
+                                            error instanceof Error
+                                              ? error.message
+                                              : typeof error === 'object' && error !== null && 'message' in error
+                                                ? String((error as { message: unknown }).message)
+                                                : '';
+                                          showToast(
+                                            msg.includes('permission') ? '삭제 권한이 없습니다. 관리자만 삭제할 수 있습니다.' : '삭제 중 오류가 발생했습니다.',
+                                            'error'
+                                          );
+                                        }
+                                      }
+                                    );
+                                  }} className="p-2 text-slate-400 hover:text-rose-600 transition-all">
+                                    <Trash2 size={18} />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -1527,6 +2056,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                       </tbody>
                     </table>
                   </div>
+                  </>
                 )}
               </motion.div>
             )}
@@ -1560,7 +2090,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                     )}
                   </div>
                   <div className="flex items-center gap-3">
-                    {selectedRenewalIds.length > 0 && (
+                    {canDeleteRenewalTargets && selectedRenewalIds.length > 0 && (
                       <button 
                         onClick={handleDeleteSelectedRenewals}
                         className="flex items-center gap-2 rounded-xl bg-rose-50 px-4 py-2.5 font-semibold text-rose-600 border border-rose-100 hover:bg-rose-100 transition-all"
@@ -1568,12 +2098,14 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                         <Trash2 size={18} /> 선택 삭제 ({selectedRenewalIds.length})
                       </button>
                     )}
-                    <button 
-                      onClick={handleDeleteAllRenewals}
-                      className="flex items-center gap-2 rounded-xl bg-slate-50 px-4 py-2.5 font-semibold text-slate-600 border border-slate-200 hover:bg-slate-100 transition-all"
-                    >
-                      <RefreshCw size={18} /> 전체 삭제
-                    </button>
+                    {canDeleteRenewalTargets && (
+                      <button 
+                        onClick={handleDeleteAllRenewals}
+                        className="flex items-center gap-2 rounded-xl bg-slate-50 px-4 py-2.5 font-semibold text-slate-600 border border-slate-200 hover:bg-slate-100 transition-all"
+                      >
+                        <RefreshCw size={18} /> 전체 삭제
+                      </button>
+                    )}
                     <label className="flex cursor-pointer items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 font-semibold text-white shadow-lg hover:bg-emerald-700 transition-all">
                       <FileUp size={20} /> 엑셀 업로드
                       <input type="file" className="hidden" accept=".xlsx, .xls" onChange={handleExcelUpload} />
@@ -1583,8 +2115,79 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
 
                 <RenewalAnalyticsDashboard targets={renewalTargets} monthLabel={boardMonthLabel} />
 
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="text-sm font-semibold text-slate-500">
+                      총 {displayedRenewalTargets.length}명
+                    </div>
+                    <input
+                      value={renewalListSearch}
+                      onChange={(e) => setRenewalListSearch(e.target.value)}
+                      placeholder="이름/번호 검색"
+                      className="h-10 w-48 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-indigo-50"
+                    />
+                    <select
+                      value={renewalListStatusFilter}
+                      onChange={(e) => setRenewalListStatusFilter(e.target.value as any)}
+                      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-indigo-50"
+                    >
+                      <option value="전체">재등록상태 전체</option>
+                      <option value="미재등록">미재등록</option>
+                      <option value="재등록 예정">재등록 예정</option>
+                      <option value="재등록">재등록</option>
+                    </select>
+                    <select
+                      value={renewalListCategoryFilter}
+                      onChange={(e) => setRenewalListCategoryFilter(e.target.value)}
+                      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-indigo-50"
+                    >
+                      <option value="전체">종목 전체</option>
+                      {CATEGORIES.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={renewalListSortKey}
+                      onChange={(e) => setRenewalListSortKey(e.target.value as any)}
+                      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-indigo-50"
+                    >
+                      <option value="no">순번</option>
+                      <option value="expiryDate">만료일</option>
+                      <option value="name">성함</option>
+                    </select>
+                    <select
+                      value={renewalListSortDir}
+                      onChange={(e) => setRenewalListSortDir(e.target.value as any)}
+                      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-4 focus:ring-indigo-50"
+                    >
+                      <option value="asc">오름차순</option>
+                      <option value="desc">내림차순</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={openCreateRenewalTarget}
+                      className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 font-semibold text-white shadow-lg hover:bg-indigo-700 transition-all"
+                    >
+                      <Plus size={18} /> 회원 추가
+                    </button>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 font-semibold text-white shadow-lg hover:bg-emerald-700 transition-all">
+                      <FileUp size={18} /> 엑셀 업로드
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept=".xlsx, .xls"
+                        onChange={handleExcelUpload}
+                      />
+                    </label>
+                  </div>
+                </div>
+
                 <div className="rounded-2xl border bg-white shadow-sm overflow-hidden overflow-x-auto">
-                  <table className="w-full text-left min-w-[1380px]">
+                  <table className="w-full text-left min-w-[1700px]">
                     <thead className="bg-slate-50 border-b">
                       <tr>
                         <th className="px-4 py-4 w-10">
@@ -1601,23 +2204,23 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                             }}
                           />
                         </th>
-                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">순번</th>
-                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">지점 / 이름</th>
-                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">성별</th>
-                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">나이</th>
-                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">연락처</th>
-                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">보유 이용권</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[72px]">순번</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[140px]">지점 / 이름</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[72px]">성별</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[72px]">나이</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[150px]">연락처</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[220px]">보유 이용권</th>
                         <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap">종목</th>
                         <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[120px]">재등록 상태</th>
-                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">락커룸/번호</th>
-                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-rose-500">최종만료일</th>
-                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase">최근출석일</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[120px]">락커룸/번호</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap text-rose-500 min-w-[120px]">최종만료일</th>
+                        <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase whitespace-nowrap min-w-[120px]">최근출석일</th>
                         <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase min-w-[200px]">TM 현황</th>
                         <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase text-right">관리</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {renewalTargets.map((t) => (
+                      {displayedRenewalTargets.map((t) => (
                         <tr key={t.id} className={cn("hover:bg-slate-50 transition-colors", selectedRenewalIds.includes(t.id) && "bg-indigo-50/30")}>
                           <td className="px-4 py-4">
                             <input 
@@ -1633,15 +2236,17 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                               }}
                             />
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-500">{t.no}</td>
-                          <td className="px-6 py-4">
-                            <div className="text-[10px] text-slate-400">{t.branch}</div>
-                            <div className="font-bold text-sm">{t.name}</div>
+                          <td className="px-6 py-4 text-sm text-slate-500 whitespace-nowrap">{t.no}</td>
+                          <td className="px-6 py-4 whitespace-nowrap min-w-[140px]">
+                            <div className="text-[10px] text-slate-400 whitespace-nowrap">{t.branch}</div>
+                            <div className="font-bold text-sm whitespace-nowrap">{t.name}</div>
                           </td>
-                          <td className="px-6 py-4 text-sm">{t.gender}</td>
-                          <td className="px-6 py-4 text-sm">{t.age}세</td>
-                          <td className="px-6 py-4 text-sm">{t.phone}</td>
-                          <td className="px-6 py-4 text-sm max-w-[140px]">{t.membership}</td>
+                          <td className="px-6 py-4 text-sm whitespace-nowrap">{t.gender}</td>
+                          <td className="px-6 py-4 text-sm whitespace-nowrap">{t.age}세</td>
+                          <td className="px-6 py-4 text-sm whitespace-nowrap">{t.phone}</td>
+                          <td className="px-6 py-4 text-sm min-w-[220px]">
+                            <div className="break-words whitespace-normal leading-snug">{t.membership}</div>
+                          </td>
                           <td className="px-6 py-4">
                             <select
                               value={t.renewalCategory || '헬스권'}
@@ -1692,7 +2297,10 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                                 return (
                                   <div key={num} className="flex flex-col items-center gap-1">
                                     <button 
-                                      onClick={() => setEditingRemind({ id: t.id, type: 'renewal', remindIdx: idx })}
+                                      onClick={() => {
+                                        setRemindModalContent(remind?.content ?? '');
+                                        setEditingRemind({ id: t.id, type: 'renewal', remindIdx: idx });
+                                      }}
                                       className={cn(
                                         "text-[10px] font-bold px-2 py-1 rounded border transition-all whitespace-nowrap",
                                         remind?.completed 
@@ -1717,18 +2325,36 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                               <button onClick={() => setEditingRenewalTarget(t)} className="p-2 text-slate-400 hover:text-indigo-600 transition-all">
                                 <Edit2 size={18} />
                               </button>
-                              <button onClick={() => {
-                                showConfirm(
-                                  '삭제 확인',
-                                  '정말 삭제하시겠습니까?',
-                                  async () => {
-                                    await deleteDoc(doc(db, 'renewalTargets', t.id));
-                                    showToast('삭제되었습니다.');
-                                  }
-                                );
-                              }} className="p-2 text-slate-400 hover:text-rose-600 transition-all">
-                                <Trash2 size={18} />
-                              </button>
+                              {canDeleteRenewalTargets && (
+                                <button onClick={() => {
+                                  showConfirm(
+                                    '삭제 확인',
+                                    '정말 삭제하시겠습니까?',
+                                    async () => {
+                                      try {
+                                        await deleteDoc(doc(db, 'renewalTargets', t.id));
+                                        showToast('삭제되었습니다.');
+                                      } catch (error) {
+                                        console.error('Error deleting renewal target:', error);
+                                        const msg =
+                                          error instanceof Error
+                                            ? error.message
+                                            : typeof error === 'object' && error !== null && 'message' in error
+                                              ? String((error as { message: unknown }).message)
+                                              : '';
+                                        showToast(
+                                          msg.includes('permission')
+                                            ? '삭제 권한이 없습니다. (지점 권한/승인 상태를 확인해주세요)'
+                                            : '삭제 중 오류가 발생했습니다.',
+                                          'error'
+                                        );
+                                      }
+                                    }
+                                  );
+                                }} className="p-2 text-slate-400 hover:text-rose-600 transition-all">
+                                  <Trash2 size={18} />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1950,13 +2576,25 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                 </select>
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-bold text-slate-700">상담 내용</label>
-                <textarea id="remind-content" name="content" defaultValue={(() => {
-                  const target = editingRemind.type === 'new' 
-                    ? newConsultations.find(c => c.id === editingRemind.id)
-                    : renewalTargets.find(t => t.id === editingRemind.id);
-                  return (target?.[`remind${editingRemind.remindIdx + 1}` as keyof typeof target] as RemindInfo)?.content || '';
-                })()} placeholder="상담 내용을 입력하세요" className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:ring-4 focus:ring-indigo-50 transition-all h-32 resize-none" />
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-sm font-bold text-slate-700">상담 내용</label>
+                  <button
+                    type="button"
+                    onClick={copyRemindContentToClipboard}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 shadow-sm hover:bg-slate-50 transition-all"
+                  >
+                    <Copy size={14} />
+                    복사하기
+                  </button>
+                </div>
+                <textarea
+                  id="remind-content"
+                  name="content"
+                  value={remindModalContent}
+                  onChange={(e) => setRemindModalContent(e.target.value)}
+                  placeholder="상담 내용을 입력하세요"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:ring-4 focus:ring-indigo-50 transition-all h-32 resize-none"
+                />
               </div>
               <div className="flex items-center gap-2">
                 <input type="checkbox" name="completed" id="remind-completed" defaultChecked={(() => {
@@ -1981,8 +2619,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-2xl rounded-3xl bg-white p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-bold text-slate-800">재등록 정보 수정</h3>
-              <button onClick={() => setEditingRenewalTarget(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+              <h3 className="text-xl font-bold text-slate-800">{isCreatingRenewalTarget ? '재등록 대상 추가' : '재등록 정보 수정'}</h3>
+              <button onClick={() => { setEditingRenewalTarget(null); setIsCreatingRenewalTarget(false); }} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
             </div>
             <form onSubmit={async (e) => {
               e.preventDefault();
@@ -2003,9 +2641,22 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                 expiryDate: fd.get('expiryDate') as string,
                 lastAttendance: fd.get('lastAttendance') as string,
               };
-              await updateDoc(doc(db, 'renewalTargets', editingRenewalTarget.id), updates);
+              if (isCreatingRenewalTarget) {
+                if (!user) return;
+                const newDoc: RenewalTarget = {
+                  ...(editingRenewalTarget as RenewalTarget),
+                  ...updates,
+                  uploadMonth: selectedMonth,
+                  uploadedBy: user.uid,
+                };
+                await setDoc(doc(db, 'renewalTargets', editingRenewalTarget.id), newDoc);
+                showToast('추가되었습니다.');
+              } else {
+                await updateDoc(doc(db, 'renewalTargets', editingRenewalTarget.id), updates);
+                showToast('수정되었습니다.');
+              }
               setEditingRenewalTarget(null);
-              showToast('수정되었습니다.');
+              setIsCreatingRenewalTarget(false);
             }} className="space-y-6">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
@@ -2078,7 +2729,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
               </div>
               <div className="flex gap-2 pt-4">
                 <button type="submit" className="flex-1 rounded-xl bg-indigo-600 py-3 font-bold text-white shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all">저장</button>
-                <button type="button" onClick={() => setEditingRenewalTarget(null)} className="flex-1 rounded-xl border border-slate-200 py-3 font-bold text-slate-500 hover:bg-slate-50 transition-all">취소</button>
+                <button type="button" onClick={() => { setEditingRenewalTarget(null); setIsCreatingRenewalTarget(false); }} className="flex-1 rounded-xl border border-slate-200 py-3 font-bold text-slate-500 hover:bg-slate-50 transition-all">취소</button>
               </div>
             </form>
           </motion.div>
@@ -2133,11 +2784,31 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
   );
 }
 
-function NavItem({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+function NavItem({
+  active,
+  onClick,
+  icon,
+  label,
+  collapsed,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+  collapsed?: boolean;
+}) {
   return (
-    <button onClick={onClick} className={cn("flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all md:flex-row md:gap-3 md:w-full md:px-4 md:py-3", active ? "text-indigo-600 bg-indigo-50" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50")}>
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all md:flex-row md:gap-3 md:w-full md:px-4 md:py-3",
+        collapsed && "md:justify-center md:px-0",
+        active ? "text-indigo-600 bg-indigo-50" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"
+      )}
+      title={collapsed ? label : undefined}
+    >
       {icon}
-      <span className="text-[10px] font-bold md:text-sm">{label}</span>
+      <span className={cn("text-[10px] font-bold md:text-sm", collapsed && "md:hidden")}>{label}</span>
     </button>
   );
 }

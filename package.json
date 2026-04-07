@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "deploy": "npm run build && firebase deploy --only hosting"
+    "check:gemini": "node scripts/check-gemini-env.mjs",
+    "deploy": "npm run build && npx firebase deploy --only hosting --project gym90fc",
+    "deploy:firestore": "npx firebase deploy --only firestore --project gym90fc",
+    "deploy:all": "npm run build && npx firebase deploy --only hosting,firestore --project gym90fc"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
