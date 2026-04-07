@@ -35,7 +35,7 @@
         "visitPath": { "type": "string" },
         "content": { "type": "string" },
         "consultant": { "type": "string" },
-        "registrationStatus": { "type": "string", "enum": ["등록", "미등록", "등록예정"] },
+        "registrationStatus": { "type": "string", "enum": ["등록", "미등록", "등록예정", "등록거부"] },
         "remind1": { 
           "type": "object",
           "properties": {

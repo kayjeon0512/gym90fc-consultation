@@ -25,7 +25,7 @@ export interface NewConsultation {
   branch: BranchType;
   createdAt: string;
   month: string;
-  registrationStatus: '등록' | '미등록' | '등록예정';
+  registrationStatus: '등록' | '미등록' | '등록예정' | '등록거부';
   remind1: RemindInfo;
   remind2: RemindInfo;
   remind3: RemindInfo;

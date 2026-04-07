@@ -734,7 +734,14 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
         // Current month
         if (c.month === selectedMonth) return true;
         // Carry over: Previous months, not registered, 3rd remind not completed, and not manually completed
-        if (c.month < selectedMonth && c.registrationStatus !== '등록' && !c.remind3?.completed && !c.isCompleted) return true;
+        if (
+          c.month < selectedMonth &&
+          c.registrationStatus !== '등록' &&
+          c.registrationStatus !== '등록거부' &&
+          !c.remind3?.completed &&
+          !c.isCompleted
+        )
+          return true;
         return false;
       });
       setNewConsultations(filtered.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')));
@@ -1280,7 +1287,13 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
 
           const rawReg = String(row[1] ?? '').trim();
           const registrationStatus: NewConsultation['registrationStatus'] =
-            rawReg === '등록' ? '등록' : rawReg === '등록예정' ? '등록예정' : '미등록';
+            rawReg === '등록'
+              ? '등록'
+              : rawReg === '등록예정'
+                ? '등록예정'
+                : rawReg === '등록거부'
+                  ? '등록거부'
+                  : '미등록';
 
           const phone = String(row[6] ?? '').trim();
           const category = String(row[7] ?? '').trim();
@@ -1806,6 +1819,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                                   <option value="미등록">미등록</option>
                                   <option value="등록">등록</option>
                                   <option value="등록예정">등록예정</option>
+                                  <option value="등록거부">등록거부</option>
                                 </select>
                               </div>
                             </div>
@@ -1874,6 +1888,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                           <option value="미등록">미등록</option>
                           <option value="등록">등록</option>
                           <option value="등록예정">등록예정</option>
+                          <option value="등록거부">등록거부</option>
                         </select>
                         <select
                           value={newListCategoryFilter}
@@ -1964,17 +1979,26 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                             <td className="px-6 py-4">
                               <select 
                                 value={c.registrationStatus || '미등록'} 
-                                onChange={async (e) => await updateDoc(doc(db, 'consultations', c.id), { registrationStatus: e.target.value })}
+                                onChange={async (e) =>
+                                  await updateDoc(doc(db, 'consultations', c.id), {
+                                    registrationStatus: e.target.value as NewConsultation['registrationStatus'],
+                                  })
+                                }
                                 className={cn(
                                   "text-xs font-bold rounded-lg px-2 py-1 border outline-none",
-                                  c.registrationStatus === '등록' ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                                  c.registrationStatus === '등록예정' ? "bg-amber-50 text-amber-700 border-amber-200" :
-                                  "bg-slate-50 text-slate-600 border-slate-200"
+                                  c.registrationStatus === '등록'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : c.registrationStatus === '등록예정'
+                                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                      : c.registrationStatus === '등록거부'
+                                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                        : 'bg-slate-50 text-slate-600 border-slate-200'
                                 )}
                               >
                                 <option value="등록">등록</option>
                                 <option value="미등록">미등록</option>
                                 <option value="등록예정">등록예정</option>
+                                <option value="등록거부">등록거부</option>
                               </select>
                             </td>
                             <td className="px-6 py-4 text-xs text-slate-600 max-w-[360px]">
