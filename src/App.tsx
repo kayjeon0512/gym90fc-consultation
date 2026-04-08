@@ -395,18 +395,22 @@ function SyncedHorizontalScrollbar({
   className?: string;
   sticky?: boolean;
 }) {
-  const [barEl, setBarEl] = useState<HTMLDivElement | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
   const [scrollWidth, setScrollWidth] = useState(0);
   const [clientWidth, setClientWidth] = useState(0);
   const [isTargetVisible, setIsTargetVisible] = useState(false);
+  const [trackWidth, setTrackWidth] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const dragStateRef = useRef<{ pointerId: number; startX: number; startLeft: number } | null>(null);
 
   useEffect(() => {
     const target = targetRef.current;
-    if (!target || !barEl) return;
+    if (!target) return;
 
     const update = () => {
       setScrollWidth(target.scrollWidth);
       setClientWidth(target.clientWidth);
+      setScrollLeft(target.scrollLeft);
     };
 
     update();
@@ -414,6 +418,12 @@ function SyncedHorizontalScrollbar({
     const ro = new ResizeObserver(() => update());
     ro.observe(target);
     if (target.firstElementChild instanceof HTMLElement) ro.observe(target.firstElementChild);
+
+    const tro = new ResizeObserver(() => {
+      const w = trackRef.current?.clientWidth ?? 0;
+      setTrackWidth(w);
+    });
+    if (trackRef.current) tro.observe(trackRef.current);
 
     const io = new IntersectionObserver(
       (entries) => {
@@ -425,33 +435,64 @@ function SyncedHorizontalScrollbar({
 
     let syncing = false;
     const onTargetScroll = () => {
-      const bar = barEl;
-      if (!bar || syncing) return;
+      if (syncing) return;
       syncing = true;
-      bar.scrollLeft = target.scrollLeft;
-      syncing = false;
-    };
-    const onBarScroll = () => {
-      const bar = barEl;
-      if (!bar || syncing) return;
-      syncing = true;
-      target.scrollLeft = bar.scrollLeft;
+      setScrollLeft(target.scrollLeft);
       syncing = false;
     };
 
     target.addEventListener('scroll', onTargetScroll, { passive: true });
-    barEl.addEventListener('scroll', onBarScroll, { passive: true });
 
     return () => {
       ro.disconnect();
+      tro.disconnect();
       io.disconnect();
       target.removeEventListener('scroll', onTargetScroll);
-      barEl.removeEventListener('scroll', onBarScroll);
     };
-  }, [targetRef, barEl]);
+  }, [targetRef]);
 
   if (!isTargetVisible) return null;
   if (!scrollWidth || scrollWidth <= clientWidth + 2) return null;
+
+  const maxScroll = Math.max(1, scrollWidth - clientWidth);
+  const maxThumbLeft = Math.max(0, trackWidth - Math.max(16, Math.round((clientWidth / scrollWidth) * trackWidth)));
+  const thumbWidth = Math.max(16, Math.round((clientWidth / scrollWidth) * trackWidth));
+  const thumbLeft = maxThumbLeft <= 0 ? 0 : Math.round((scrollLeft / maxScroll) * maxThumbLeft);
+
+  const scrollToRatio = (ratio: number) => {
+    const target = targetRef.current;
+    if (!target) return;
+    const next = Math.round(Math.min(1, Math.max(0, ratio)) * maxScroll);
+    target.scrollLeft = next;
+  };
+
+  const onPointerDown: React.PointerEventHandler<HTMLDivElement> = (e) => {
+    if (e.button !== 0) return;
+    const track = trackRef.current;
+    if (!track) return;
+    const rect = track.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const ratio = (x - thumbWidth / 2) / Math.max(1, trackWidth - thumbWidth);
+    scrollToRatio(ratio);
+
+    dragStateRef.current = { pointerId: e.pointerId, startX: e.clientX, startLeft: thumbLeft };
+    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+  };
+
+  const onPointerMove: React.PointerEventHandler<HTMLDivElement> = (e) => {
+    const s = dragStateRef.current;
+    if (!s || s.pointerId !== e.pointerId) return;
+    const dx = e.clientX - s.startX;
+    const nextLeft = Math.min(maxThumbLeft, Math.max(0, s.startLeft + dx));
+    const ratio = maxThumbLeft <= 0 ? 0 : nextLeft / maxThumbLeft;
+    scrollToRatio(ratio);
+  };
+
+  const onPointerUpOrCancel: React.PointerEventHandler<HTMLDivElement> = (e) => {
+    const s = dragStateRef.current;
+    if (!s || s.pointerId !== e.pointerId) return;
+    dragStateRef.current = null;
+  };
 
   return (
     <div
@@ -461,8 +502,24 @@ function SyncedHorizontalScrollbar({
         className
       )}
     >
-      <div ref={setBarEl} className="h-6 overflow-x-auto overflow-y-hidden rounded-md bg-slate-100/70 ring-1 ring-slate-200">
-        <div style={{ width: scrollWidth, height: 1 }} />
+      <div
+        ref={trackRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUpOrCancel}
+        onPointerCancel={onPointerUpOrCancel}
+        className="relative h-6 w-full rounded-md bg-slate-100/70 ring-1 ring-slate-200 select-none touch-none"
+        aria-label="가로 스크롤"
+        role="scrollbar"
+        aria-orientation="horizontal"
+        aria-valuemin={0}
+        aria-valuemax={maxScroll}
+        aria-valuenow={scrollLeft}
+      >
+        <div
+          className="absolute top-1 bottom-1 rounded bg-slate-400/70 hover:bg-slate-500/70"
+          style={{ width: thumbWidth, left: thumbLeft }}
+        />
       </div>
     </div>
   );
