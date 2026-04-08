@@ -389,17 +389,20 @@ function RenewalAnalyticsDashboard({ targets, monthLabel }: { targets: RenewalTa
 function SyncedHorizontalScrollbar({
   targetRef,
   className = '',
+  sticky = false,
 }: {
   targetRef: React.RefObject<HTMLDivElement | null>;
   className?: string;
+  sticky?: boolean;
 }) {
-  const barRef = useRef<HTMLDivElement | null>(null);
+  const [barEl, setBarEl] = useState<HTMLDivElement | null>(null);
   const [scrollWidth, setScrollWidth] = useState(0);
   const [clientWidth, setClientWidth] = useState(0);
+  const [isTargetVisible, setIsTargetVisible] = useState(false);
 
   useEffect(() => {
     const target = targetRef.current;
-    if (!target) return;
+    if (!target || !barEl) return;
 
     const update = () => {
       setScrollWidth(target.scrollWidth);
@@ -412,16 +415,24 @@ function SyncedHorizontalScrollbar({
     ro.observe(target);
     if (target.firstElementChild instanceof HTMLElement) ro.observe(target.firstElementChild);
 
+    const io = new IntersectionObserver(
+      (entries) => {
+        setIsTargetVisible(entries.some((e) => e.isIntersecting));
+      },
+      { root: null, threshold: 0.01 }
+    );
+    io.observe(target);
+
     let syncing = false;
     const onTargetScroll = () => {
-      const bar = barRef.current;
+      const bar = barEl;
       if (!bar || syncing) return;
       syncing = true;
       bar.scrollLeft = target.scrollLeft;
       syncing = false;
     };
     const onBarScroll = () => {
-      const bar = barRef.current;
+      const bar = barEl;
       if (!bar || syncing) return;
       syncing = true;
       target.scrollLeft = bar.scrollLeft;
@@ -429,20 +440,28 @@ function SyncedHorizontalScrollbar({
     };
 
     target.addEventListener('scroll', onTargetScroll, { passive: true });
-    barRef.current?.addEventListener('scroll', onBarScroll, { passive: true });
+    barEl.addEventListener('scroll', onBarScroll, { passive: true });
 
     return () => {
       ro.disconnect();
+      io.disconnect();
       target.removeEventListener('scroll', onTargetScroll);
-      barRef.current?.removeEventListener('scroll', onBarScroll);
+      barEl.removeEventListener('scroll', onBarScroll);
     };
-  }, [targetRef]);
+  }, [targetRef, barEl]);
 
+  if (!isTargetVisible) return null;
   if (!scrollWidth || scrollWidth <= clientWidth + 2) return null;
 
   return (
-    <div className={cn('w-full', className)}>
-      <div ref={barRef} className="h-5 overflow-x-auto overflow-y-hidden rounded-md bg-slate-100/70 ring-1 ring-slate-200">
+    <div
+      className={cn(
+        'w-full',
+        sticky && 'sticky top-2 z-[70] rounded-xl bg-white/80 backdrop-blur px-3 py-2 shadow-sm ring-1 ring-slate-200/60',
+        className
+      )}
+    >
+      <div ref={setBarEl} className="h-6 overflow-x-auto overflow-y-hidden rounded-md bg-slate-100/70 ring-1 ring-slate-200">
         <div style={{ width: scrollWidth, height: 1 }} />
       </div>
     </div>
@@ -2009,10 +2028,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                         />
                       </label>
                     </div>
+                  <SyncedHorizontalScrollbar targetRef={newTableScrollRef} sticky />
                   <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
-                    <div className="px-3 pt-3">
-                      <SyncedHorizontalScrollbar targetRef={newTableScrollRef} />
-                    </div>
                     <div ref={newTableScrollRef} className="overflow-x-auto">
                     <table className="w-full text-left min-w-[1500px]">
                       <thead className="bg-slate-50 border-b">
@@ -2282,10 +2299,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                   </div>
                 </div>
 
+                <SyncedHorizontalScrollbar targetRef={renewalTableScrollRef} sticky />
                 <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
-                  <div className="px-3 pt-3">
-                    <SyncedHorizontalScrollbar targetRef={renewalTableScrollRef} />
-                  </div>
                   <div ref={renewalTableScrollRef} className="overflow-x-auto">
                   <table className="w-full text-left min-w-[1700px]">
                     <thead className="bg-slate-50 border-b">
