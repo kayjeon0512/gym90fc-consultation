@@ -386,6 +386,67 @@ function RenewalAnalyticsDashboard({ targets, monthLabel }: { targets: RenewalTa
   );
 }
 
+function StickyHorizontalScrollbar({
+  targetRef,
+}: {
+  targetRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const [scrollWidth, setScrollWidth] = useState(0);
+  const [clientWidth, setClientWidth] = useState(0);
+
+  useEffect(() => {
+    const target = targetRef.current;
+    if (!target) return;
+
+    const update = () => {
+      setScrollWidth(target.scrollWidth);
+      setClientWidth(target.clientWidth);
+    };
+
+    update();
+
+    const ro = new ResizeObserver(() => update());
+    ro.observe(target);
+    if (target.firstElementChild instanceof HTMLElement) ro.observe(target.firstElementChild);
+
+    let syncing = false;
+    const onTargetScroll = () => {
+      const bar = barRef.current;
+      if (!bar || syncing) return;
+      syncing = true;
+      bar.scrollLeft = target.scrollLeft;
+      syncing = false;
+    };
+    const onBarScroll = () => {
+      const bar = barRef.current;
+      if (!bar || syncing) return;
+      syncing = true;
+      target.scrollLeft = bar.scrollLeft;
+      syncing = false;
+    };
+
+    target.addEventListener('scroll', onTargetScroll, { passive: true });
+    barRef.current?.addEventListener('scroll', onBarScroll, { passive: true });
+
+    return () => {
+      ro.disconnect();
+      target.removeEventListener('scroll', onTargetScroll);
+      barRef.current?.removeEventListener('scroll', onBarScroll);
+    };
+  }, [targetRef]);
+
+  if (!scrollWidth || scrollWidth <= clientWidth + 2) return null;
+
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-[60] border-t border-slate-200 bg-white/80 backdrop-blur">
+      <div ref={barRef} className="h-4 overflow-x-auto overflow-y-hidden">
+        <div style={{ width: scrollWidth, height: 1 }} />
+      </div>
+    </div>
+  );
+}
+
 const formatPhoneNumber = (value: string) => {
   const digits = value.replace(/\D/g, '');
   if (digits.length <= 3) return digits;
@@ -435,6 +496,9 @@ export default function App() {
   const [renewalListCategoryFilter, setRenewalListCategoryFilter] = useState<'전체' | string>('전체');
   const [renewalListSortKey, setRenewalListSortKey] = useState<'no' | 'expiryDate' | 'name'>('no');
   const [renewalListSortDir, setRenewalListSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const newTableScrollRef = useRef<HTMLDivElement | null>(null);
+  const renewalTableScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!editingRemind) setRemindModalContent('');
@@ -1943,7 +2007,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                         />
                       </label>
                     </div>
-                  <div className="rounded-2xl border bg-white shadow-sm overflow-hidden overflow-x-auto">
+                  <div ref={newTableScrollRef} className="rounded-2xl border bg-white shadow-sm overflow-hidden overflow-x-auto">
                     <table className="w-full text-left min-w-[1500px]">
                       <thead className="bg-slate-50 border-b">
                         <tr>
@@ -2080,6 +2144,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                       </tbody>
                     </table>
                   </div>
+                  <StickyHorizontalScrollbar targetRef={newTableScrollRef} />
                   </>
                 )}
               </motion.div>
@@ -2211,7 +2276,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                   </div>
                 </div>
 
-                <div className="rounded-2xl border bg-white shadow-sm overflow-hidden overflow-x-auto">
+                <div ref={renewalTableScrollRef} className="rounded-2xl border bg-white shadow-sm overflow-hidden overflow-x-auto">
                   <table className="w-full text-left min-w-[1700px]">
                     <thead className="bg-slate-50 border-b">
                       <tr>
@@ -2389,6 +2454,7 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                     </tbody>
                   </table>
                 </div>
+                <StickyHorizontalScrollbar targetRef={renewalTableScrollRef} />
               </motion.div>
             )}
 
