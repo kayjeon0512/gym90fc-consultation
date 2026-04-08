@@ -386,15 +386,16 @@ function RenewalAnalyticsDashboard({ targets, monthLabel }: { targets: RenewalTa
   );
 }
 
-function StickyHorizontalScrollbar({
+function SyncedHorizontalScrollbar({
   targetRef,
+  className = '',
 }: {
   targetRef: React.RefObject<HTMLDivElement | null>;
+  className?: string;
 }) {
   const barRef = useRef<HTMLDivElement | null>(null);
   const [scrollWidth, setScrollWidth] = useState(0);
   const [clientWidth, setClientWidth] = useState(0);
-  const [isTargetVisible, setIsTargetVisible] = useState(false);
 
   useEffect(() => {
     const target = targetRef.current;
@@ -410,14 +411,6 @@ function StickyHorizontalScrollbar({
     const ro = new ResizeObserver(() => update());
     ro.observe(target);
     if (target.firstElementChild instanceof HTMLElement) ro.observe(target.firstElementChild);
-
-    const io = new IntersectionObserver(
-      (entries) => {
-        setIsTargetVisible(entries.some((e) => e.isIntersecting));
-      },
-      { root: null, threshold: 0.01 }
-    );
-    io.observe(target);
 
     let syncing = false;
     const onTargetScroll = () => {
@@ -440,21 +433,17 @@ function StickyHorizontalScrollbar({
 
     return () => {
       ro.disconnect();
-      io.disconnect();
       target.removeEventListener('scroll', onTargetScroll);
       barRef.current?.removeEventListener('scroll', onBarScroll);
     };
   }, [targetRef]);
 
-  if (!isTargetVisible) return null;
   if (!scrollWidth || scrollWidth <= clientWidth + 2) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-[80] border-t border-slate-200 bg-white/90 backdrop-blur">
-      <div className="px-3 py-1">
-        <div ref={barRef} className="h-6 overflow-x-auto overflow-y-hidden rounded-md bg-slate-100/70 ring-1 ring-slate-200">
-          <div style={{ width: scrollWidth, height: 1 }} />
-        </div>
+    <div className={cn('w-full', className)}>
+      <div ref={barRef} className="h-5 overflow-x-auto overflow-y-hidden rounded-md bg-slate-100/70 ring-1 ring-slate-200">
+        <div style={{ width: scrollWidth, height: 1 }} />
       </div>
     </div>
   );
@@ -2020,7 +2009,11 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                         />
                       </label>
                     </div>
-                  <div ref={newTableScrollRef} className="rounded-2xl border bg-white shadow-sm overflow-hidden overflow-x-auto">
+                  <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+                    <div className="px-3 pt-3">
+                      <SyncedHorizontalScrollbar targetRef={newTableScrollRef} />
+                    </div>
+                    <div ref={newTableScrollRef} className="overflow-x-auto">
                     <table className="w-full text-left min-w-[1500px]">
                       <thead className="bg-slate-50 border-b">
                         <tr>
@@ -2156,8 +2149,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   </div>
-                  <StickyHorizontalScrollbar targetRef={newTableScrollRef} />
                   </>
                 )}
               </motion.div>
@@ -2289,7 +2282,11 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                   </div>
                 </div>
 
-                <div ref={renewalTableScrollRef} className="rounded-2xl border bg-white shadow-sm overflow-hidden overflow-x-auto">
+                <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+                  <div className="px-3 pt-3">
+                    <SyncedHorizontalScrollbar targetRef={renewalTableScrollRef} />
+                  </div>
+                  <div ref={renewalTableScrollRef} className="overflow-x-auto">
                   <table className="w-full text-left min-w-[1700px]">
                     <thead className="bg-slate-50 border-b">
                       <tr>
@@ -2466,8 +2463,8 @@ ${aiOptions.additionalInfo ? `- 추가 정보/혜택: ${aiOptions.additionalInfo
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
-                <StickyHorizontalScrollbar targetRef={renewalTableScrollRef} />
               </motion.div>
             )}
 
