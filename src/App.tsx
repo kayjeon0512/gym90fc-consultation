@@ -394,6 +394,7 @@ function StickyHorizontalScrollbar({
   const barRef = useRef<HTMLDivElement | null>(null);
   const [scrollWidth, setScrollWidth] = useState(0);
   const [clientWidth, setClientWidth] = useState(0);
+  const [isTargetVisible, setIsTargetVisible] = useState(false);
 
   useEffect(() => {
     const target = targetRef.current;
@@ -409,6 +410,14 @@ function StickyHorizontalScrollbar({
     const ro = new ResizeObserver(() => update());
     ro.observe(target);
     if (target.firstElementChild instanceof HTMLElement) ro.observe(target.firstElementChild);
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        setIsTargetVisible(entries.some((e) => e.isIntersecting));
+      },
+      { root: null, threshold: 0.01 }
+    );
+    io.observe(target);
 
     let syncing = false;
     const onTargetScroll = () => {
@@ -431,17 +440,21 @@ function StickyHorizontalScrollbar({
 
     return () => {
       ro.disconnect();
+      io.disconnect();
       target.removeEventListener('scroll', onTargetScroll);
       barRef.current?.removeEventListener('scroll', onBarScroll);
     };
   }, [targetRef]);
 
+  if (!isTargetVisible) return null;
   if (!scrollWidth || scrollWidth <= clientWidth + 2) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-[60] border-t border-slate-200 bg-white/80 backdrop-blur">
-      <div ref={barRef} className="h-4 overflow-x-auto overflow-y-hidden">
-        <div style={{ width: scrollWidth, height: 1 }} />
+    <div className="fixed bottom-0 left-0 right-0 z-[80] border-t border-slate-200 bg-white/90 backdrop-blur">
+      <div className="px-3 py-1">
+        <div ref={barRef} className="h-6 overflow-x-auto overflow-y-hidden rounded-md bg-slate-100/70 ring-1 ring-slate-200">
+          <div style={{ width: scrollWidth, height: 1 }} />
+        </div>
       </div>
     </div>
   );
